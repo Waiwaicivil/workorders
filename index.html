@@ -305,6 +305,12 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .files .fmeta{font-size:12px;color:var(--muted);white-space:nowrap}
 .files .del,.log .del{border:0;background:transparent;color:var(--faint);font-size:12px;padding:0 4px;cursor:pointer}
 .files .del:hover,.log .del:hover,.log .del.confirm,.files .del.confirm{color:var(--danger);font-weight:600}
+.photos{display:flex;flex-wrap:wrap;gap:8px}
+.photo{margin:0;width:120px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--surface-2);cursor:pointer;display:flex;flex-direction:column}
+.photo img,.photo .ph{width:120px;height:90px;object-fit:cover;display:grid;place-items:center;color:var(--muted);font-size:12px}
+.photo figcaption{font-size:11px;color:var(--muted);padding:2px 6px;display:flex;justify-content:space-between;align-items:center;gap:4px}
+.photo .del{opacity:1}
+.photo.pending{padding:8px;font-size:12px;color:var(--muted);justify-content:center}
 .linklist{font-size:13px;margin-top:6px;color:var(--muted);word-break:break-all}
 .linklist a{color:var(--accent)}
 .log .by{font-weight:600;color:var(--text)}
@@ -330,6 +336,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   #printArea .signs{display:flex;gap:24px;margin-top:40px;page-break-inside:avoid}
   #printArea .signs>div{flex:1;text-align:center;font-size:13px}
   #printArea .signs .line{border-bottom:1px solid #000;height:44px;margin-bottom:6px}
+  #printArea .pics{display:flex;flex-wrap:wrap;gap:10px}
+  #printArea .pics figure{margin:0;width:47%;page-break-inside:avoid}
+  #printArea .pics img{width:100%;max-height:260px;object-fit:contain;border:1px solid #999}
+  #printArea .pics figcaption{font-size:11px;color:#555;margin-top:2px}
   #printArea .signs span{color:#555;font-size:12px}
 }
 @media (max-width:760px){
@@ -399,7 +409,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div id="modalHost"></div>
 <div class="login hidden" id="login">
   <form class="box" id="loginForm" autocomplete="on">
-    <div class="head"><div class="mark">WO</div><div><h2>งานแผนกโยธาและเฉพาะกิจ</h2><div class="sub">เข้าสู่ระบบเพื่อใช้งาน</div></div></div>
+    <div class="head"><div class="mark">📋</div><div><h2>งานแผนกโยธาและเฉพาะกิจ</h2><div class="sub">เข้าสู่ระบบเพื่อใช้งาน</div></div></div>
     <div class="f"><label>ชื่อผู้ใช้</label><input id="lUser" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required></div>
     <div class="f"><label>รหัสผ่าน</label><input id="lPass" name="password" type="password" autocomplete="current-password" required></div>
     <div class="err" id="lErr"></div>
@@ -425,7 +435,7 @@ const C={"STATUSES":[{"id":"received","name":"รับเรื่อง","tone
 const STATUSES=C.STATUSES, PRIORITIES=C.PRIORITIES, ROLE_NAME=C.ROLE_NAME, DEFAULT_SETTINGS=C.DEFAULT_SETTINGS, WORKSPACES=C.WORKSPACES;
 const CLOSED=new Set(['done','cancel']);
 const SESSION_KEY='wo-civil-session';
-const WS_FUNCS=new Set(['getAll','saveItem','deleteItem','deleteExamples','addLog','deleteLog','uploadFile','deleteFile']);
+const WS_FUNCS=new Set(['getAll','saveItem','deleteItem','deleteExamples','addLog','deleteLog','uploadFile','deleteFile','getFile','getTrash','restoreItem','purgeItem']);
 
 /* ---------- state ---------- */
 let items={};            // ใบงานที่ยังไม่เซ็นรับ (พื้นที่งานปัจจุบัน)
@@ -643,8 +653,12 @@ async function saveNow(id,attempt){
     const r=await gs('saveItem',doc);
     const cur=findItem(id);
     if(cur){
-      base[id]=r.updatedAt;cur.updatedAt=r.updatedAt;cur.updatedBy=r.updatedBy;cur.no=r.no;
-      cur.signed=r.signed;cur.signedAt=r.signedAt;cur.signedBy=r.signedBy;if(r.files)cur.files=r.files;
+      base[id]=r.updatedAt;cur.updatedAt=r.updatedAt;cur.updatedBy=r.updatedBy;
+      // ใช้ค่าจาก server เฉพาะช่องที่ไม่ได้ถูกแก้ต่อระหว่างรอ (กันการเซ็นรับ/แก้ใหม่ถูกค่าเก่าทับ)
+      const d2=dirty[id]||{};
+      if(!('no' in d2))cur.no=r.no;
+      if(!('signed' in d2)){cur.signed=r.signed;cur.signedAt=r.signedAt;cur.signedBy=r.signedBy}
+      if(r.files&&!uploading[id])cur.files=r.files;
       // ย้ายระหว่างงานปัจจุบัน <-> คลัง
       if(cur.signed&&items[id]){delete items[id];archive[id]=cur;archiveLoadedAt=0}
       else if(!cur.signed&&archive[id]){delete archive[id];items[id]=cur}
@@ -700,7 +714,7 @@ function removeItem(id){
   if(!isAdmin())return;
   const it=findItem(id);if(!it)return;
   delete items[id];delete archive[id];render();
-  gs('deleteItem',id).then(()=>toast('ลบใบงานแล้ว')).catch(e=>{toast(cleanMsg(errMsg(e)),true);refresh(true)});
+  gs('deleteItem',id).catch(e=>{toast(cleanMsg(errMsg(e)),true);refresh(true)});
 }
 
 /* ---------- บันทึกความคืบหน้า (append รายแถว) ---------- */
@@ -747,6 +761,33 @@ function signItem(id,on){
 
 /* ---------- ไฟล์แนบ (เก็บในไดรฟ์เจ้าของ ไม่แชร์สาธารณะ เปิดผ่านแอปหลังล็อกอิน) ---------- */
 const uploading={};
+function isImg(f){return /^image\//i.test(f.mime||'')||/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name||'')}
+const thumbCache={};const thumbLoading={};
+function thumbHtml(f){
+  if(thumbCache[f.id])return `<img src="${thumbCache[f.id]}" alt="${esc(f.name)}">`;
+  loadThumb(f.id);
+  return `<div class="ph">⏳</div>`;
+}
+function loadThumb(fileId){
+  if(thumbCache[fileId]||thumbLoading[fileId]||!openId)return;
+  thumbLoading[fileId]=true;
+  const id=openId;
+  gs('getFile',id,fileId).then(r=>{
+    const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    const blob=new Blob([arr],{type:r.mime||'image/jpeg'});fileCache[fileId]=blob;
+    thumbCache[fileId]=URL.createObjectURL(blob);
+    $$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.outerHTML=`<img src="${thumbCache[fileId]}" alt="">`});
+  }).catch(e=>{$$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.textContent='โหลดไม่ได้'})}).then(()=>{delete thumbLoading[fileId]});
+}
+async function imagesForPrint(it){
+  const imgs=(it.files||[]).filter(isImg);
+  const out=[];
+  for(const f of imgs){
+    if(!thumbCache[f.id]){try{const r=await gs('getFile',it.id,f.id);const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const blob=new Blob([arr],{type:r.mime||'image/jpeg'});fileCache[f.id]=blob;thumbCache[f.id]=URL.createObjectURL(blob)}catch(e){continue}}
+    out.push({name:f.name,src:thumbCache[f.id],by:f.by,ts:f.ts});
+  }
+  return out;
+}
 function shrinkImage(file){
   // ย่อรูปใหญ่ก่อนอัปโหลด (ด้านยาวสุด 1600 px, JPEG 82%) ไฟล์อื่นส่งตามเดิม
   return new Promise(res=>{
@@ -766,9 +807,10 @@ function shrinkImage(file){
 async function uploadFileUI(id,file){
   const it=findItem(id);if(!it||!file||!canEditItem(it))return;
   if(uploading[id]){toast('รอไฟล์ก่อนหน้าอัปโหลดให้เสร็จก่อน');return}
+  if(/^image\//i.test(file.type)&&file.size>0&&!/^image\/(jpeg|png|webp|gif|heic|heif)$/i.test(file.type)){toast('รองรับเฉพาะ JPG / PNG / WEBP / HEIC');return}
   file=await shrinkImage(file);
   if(file.size>15*1024*1024){toast('ไฟล์ใหญ่เกิน 15 MB');return}
-  uploading[id]=file.name+' ('+Math.round(file.size/1024)+' KB)';renderDrawer();
+  uploading[id]={name:file.name+' ('+Math.round(file.size/1024)+' KB)',img:/^image\//i.test(file.type)};renderDrawer();
   const rd=new FileReader();
   rd.onload=()=>{
     const b64=String(rd.result).split(',')[1];
@@ -981,7 +1023,7 @@ function renderDrawer(){
   const ro=!canEditItem(it);const dis=ro?'disabled':'';
   const lockedNote=it.signed&&!isAdmin()?'<div class="note" style="margin-top:8px">ใบงานนี้เซ็นรับแล้ว แก้ไขได้เฉพาะผู้ดูแลระบบ</div>':(!canEdit()?'<div class="note" style="margin-top:8px">สิทธิ์ของคุณดูได้อย่างเดียว</div>':'');
   const links=urlsIn(it.detail);
-  const files=it.files||[];
+  const files=it.files||[];const imgs=files.filter(isImg),docs=files.filter(f=>!isImg(f));
   dr.innerHTML=`
     <div class="dhead" ${ro?'data-ro':''}>
       <div class="line1">
@@ -1027,9 +1069,13 @@ function renderDrawer(){
         <div class="grid"><div class="f wide"><textarea data-f="detail" placeholder="ขอบเขตงาน สเปก ขนาด ข้อควรระวัง เลขแบบ ลิงก์ไฟล์ ฯลฯ" ${dis}>${esc(it.detail||'')}</textarea></div></div>
         ${links.length?`<div class="linklist">ลิงก์ในรายละเอียด: ${links.map(u=>`<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(u.length>60?u.slice(0,57)+'…':u)}</a>`).join(' · ')}</div>`:''}
       </div>
-      <div class="sect"><h3>ไฟล์แนบ / รูปหน้างาน</h3>
-        <ul class="files">${files.length||uploading[it.id]?files.map(f=>`<li><a href="#" data-fopen="${esc(f.id)}" title="เปิดไฟล์">📎 ${esc(f.name)}</a><span class="fmeta">${f.size?Math.round(f.size/1024)+' KB':''}${f.by?' · '+esc(f.by):''}</span>${ro?'':`<button class="del" data-fdel="${esc(f.id)}" title="ลบไฟล์">ลบ</button>`}</li>`).join('')+(uploading[it.id]?`<li class="pending"><span>⏳ กำลังอัปโหลด ${esc(uploading[it.id])}…</span></li>`:''):'<li class="readonly-note">ยังไม่มีไฟล์แนบ</li>'}</ul>
-        ${ro?'':`<label class="btn sm" style="display:inline-flex;margin-top:8px">📷 แนบไฟล์ / ถ่ายรูป<input type="file" id="fileInput" accept="image/*,application/pdf,.dwg,.dxf,.xlsx,.docx,.zip" style="display:none"></label> <span class="readonly-note">ไม่เกิน 15 MB ต่อไฟล์ เก็บใน Google Drive โฟลเดอร์ “ใบงาน-ไฟล์แนบ”</span>`}
+      <div class="sect"><h3>รูปหน้างาน</h3>
+        <div class="photos">${imgs.length?imgs.map(f=>`<figure class="photo" data-fopen="${esc(f.id)}" title="${esc(f.name)} · กดเพื่อดูเต็ม">${thumbHtml(f)}<figcaption>${esc(f.by||'')}${ro?'':`<button class="del" data-fdel="${esc(f.id)}" title="ลบรูป">ลบ</button>`}</figcaption></figure>`).join(''):(uploading[it.id]?'':'<span class="readonly-note">ยังไม่มีรูป</span>')}${uploading[it.id]&&uploading[it.id].img?`<div class="photo pending">⏳ ${esc(uploading[it.id].name)}</div>`:''}</div>
+        ${ro?'':`<label class="btn sm" style="display:inline-flex;margin-top:8px">📷 ถ่ายรูป / เลือกรูป<input type="file" id="imgInput" accept="image/*" style="display:none"></label> <span class="readonly-note">รูปจะถูกย่อให้เล็กก่อนส่ง และพิมพ์ออกมาพร้อมใบงาน</span>`}
+      </div>
+      <div class="sect"><h3>ไฟล์แนบอื่น ๆ</h3>
+        <ul class="files">${docs.length||(uploading[it.id]&&!uploading[it.id].img)?docs.map(f=>`<li><a href="#" data-fopen="${esc(f.id)}" title="เปิดไฟล์">📎 ${esc(f.name)}</a><span class="fmeta">${f.size?Math.round(f.size/1024)+' KB':''}${f.by?' · '+esc(f.by):''}</span>${ro?'':`<button class="del" data-fdel="${esc(f.id)}" title="ลบไฟล์">ลบ</button>`}</li>`).join('')+(uploading[it.id]&&!uploading[it.id].img?`<li class="pending"><span>⏳ กำลังอัปโหลด ${esc(uploading[it.id].name)}…</span></li>`:''):'<li class="readonly-note">ยังไม่มีไฟล์แนบ</li>'}</ul>
+        ${ro?'':`<label class="btn sm" style="display:inline-flex;margin-top:8px">📎 แนบไฟล์<input type="file" id="fileInput" accept="application/pdf,.dwg,.dxf,.xlsx,.xls,.docx,.doc,.zip,.csv,.txt" style="display:none"></label> <span class="readonly-note">ไม่เกิน 15 MB ต่อไฟล์ (PDF, แบบ, Excel ฯลฯ) ไม่พิมพ์ออกมากับใบงาน</span>`}
       </div>
       <div class="sect"><h3>บันทึกความคืบหน้า</h3>
         ${ro?'<div class="readonly-note">สิทธิ์ของคุณเพิ่มบันทึกไม่ได้</div>':`<div class="logform">
@@ -1040,7 +1086,7 @@ function renderDrawer(){
       </div>
       <div class="sect"><h3>อื่น ๆ</h3>
         <div class="danger-zone">
-          ${isAdmin()?(confirmDelete?`<span style="color:var(--danger);font-size:13px">ลบใบงานนี้ถาวร (รวมบันทึกทั้งหมด)?</span><button class="btn danger sm" id="dDeleteYes">ยืนยันลบ</button><button class="btn sm" id="dDeleteNo">ยกเลิก</button>`:`<button class="btn danger sm" id="dDelete">ลบใบงานนี้</button>`):'<span class="readonly-note">การลบใบงานทำได้เฉพาะผู้ดูแลระบบ</span>'}
+          ${isAdmin()?(confirmDelete?`<span style="color:var(--danger);font-size:13px">ย้ายใบงานนี้ไปถังขยะ? (กู้คืนได้ภายใน 7 วัน)</span><button class="btn danger sm" id="dDeleteYes">ยืนยันลบ</button><button class="btn sm" id="dDeleteNo">ยกเลิก</button>`:`<button class="btn danger sm" id="dDelete">ลบใบงานนี้</button>`):'<span class="readonly-note">การลบใบงานทำได้เฉพาะผู้ดูแลระบบ</span>'}
         </div>
       </div>
     </div>
@@ -1055,9 +1101,11 @@ function openItem(id){openId=id;confirmDelete=false;renderDrawer()}
 function closeDrawer(){openId=null;confirmDelete=false;renderDrawer()}
 
 /* ---------- พิมพ์ / ส่งออก ---------- */
-function printItem(it){
+async function printItem(it){
   const row=(k,v)=>`<tr><th>${esc(k)}</th><td>${v||'—'}</td></tr>`;
   const logs=(it.log||[]).slice().sort((a,b)=>a.ts-b.ts);
+  toast('กำลังเตรียมพิมพ์…');
+  const pics=await imagesForPrint(it);
   $('#printArea').innerHTML=`
     <div class="phead"><div><div class="pt">${esc(WORKSPACES[ws].name)} · ใบงาน</div><div class="pn">${esc(it.no||'')}</div></div><div class="pd">พิมพ์ ${fmtDT(Date.now())}</div></div>
     <h1>${esc(it.title||'')}</h1>
@@ -1066,8 +1114,8 @@ function printItem(it){
       ${row('ผู้ขอ / ผู้ประสานงาน',esc(it.requester))}${row('สถานที่ / หน้างาน',esc(it.location))}${row('ผู้รับผิดชอบ',esc(it.assignee))}${row('ผู้รับเหมา',esc(it.contractor))}${row('ราคาประเมิน / งบ',esc(it.budget))}${row('เลขที่ PR / PO',esc(it.poRef))}
       ${row('วันรับใบงาน',fmtD(it.received))}${row('วันเริ่มงาน',fmtD(it.start))}${row('กำหนดเสร็จ',fmtD(it.due))}${row('วันเสร็จจริง',fmtD(it.finished))}${row('ความคืบหน้า',(it.progress||0)+'%')}
       ${row('รายละเอียดงาน','<div class="pre">'+esc(it.detail)+'</div>')}
-      ${it.files&&it.files.length?row('ไฟล์แนบ',it.files.map(f=>esc(f.name)).join(', ')):''}
     </table>
+    ${pics.length?`<h2>รูปหน้างาน (${pics.length})</h2><div class="pics">${pics.map(p=>`<figure><img src="${p.src}"><figcaption>${esc(p.name)}${p.ts?' · '+fmtDT(p.ts):''}</figcaption></figure>`).join('')}</div>`:''}
     <h2>บันทึกความคืบหน้า</h2>
     ${logs.length?`<table class="ptable logs"><tr><th>วันเวลา</th><th>สถานะ</th><th>โดย</th><th>ข้อความ</th></tr>${logs.map(l=>`<tr><td>${fmtDT(l.ts)}</td><td>${esc(l.status?statusOf(l.status).name:'')}</td><td>${esc(l.by||'')}</td><td>${esc(l.text)}</td></tr>`).join('')}</table>`:'<p>— ไม่มีบันทึก —</p>'}
     <div class="signs">
@@ -1184,13 +1232,23 @@ function showSettingsModal(){
       <div class="f"><label>รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label><input id="nuPass" type="password" autocomplete="new-password"></div>
     </div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="nuAdd">เพิ่มผู้ใช้</button></div>
+    <h2 style="margin-top:22px">ถังขยะ · ${esc(WORKSPACES[ws].name)}</h2>
+    <div class="readonly-note" style="margin-bottom:8px">ใบงานที่ลบจะพักไว้ที่นี่ 7 วัน กู้คืนได้ ครบกำหนดระบบลบถาวรพร้อมบันทึกและไฟล์แนบ</div>
+    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>เลขที่</th><th>หัวข้อ</th><th>ลบเมื่อ</th><th>ลบถาวรใน</th><th></th></tr></thead><tbody id="trashBody"><tr><td colspan="5" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
     <h2 style="margin-top:22px">อีเมลสรุปประจำวัน</h2>
     <div class="readonly-note" style="margin-bottom:8px">ส่งรายการ “เกินกำหนด / ครบกำหนดใน 7 วัน / เสร็จแล้วรอเซ็นรับ” ของทั้งสองแผนก ให้ผู้ดูแลระบบและเจ้าหน้าที่ทุกคนที่มีอีเมล วันละครั้ง (ไม่ส่งถ้าไม่มีรายการ)</div>
     <div class="grid"><div class="f"><label>สถานะ</label><div id="digestState" style="padding:6px 0">${digest.enabled?'<b style="color:var(--s-green-fg)">เปิดอยู่</b> ส่งทุกวันเวลา '+String(digest.hour).padStart(2,'0')+':00':'ปิดอยู่'}</div></div><div class="f"><label>เวลาส่ง</label><select id="digestHour">${hours}</select></div></div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="digestOn">${digest.enabled?'บันทึกเวลาใหม่':'เปิดใช้'}</button>${digest.enabled?'<button class="btn" id="digestOff">ปิด</button>':''}<button class="btn" id="digestTest">ส่งทดสอบมาที่อีเมลของฉัน</button></div>
     <div class="note" style="margin-top:12px">ข้อมูลทั้งหมดเก็บใน Google Sheet (ชีท “ใบงาน” / “บันทึกความคืบหน้า” / “ตั้งค่า” / “ผู้ใช้”) รหัสผ่านถูกเข้ารหัสแบบ hash ในชีท อ่านกลับไม่ได้</div>
   </div></div>`;
-  loadUsersInto();
+  loadUsersInto();loadTrashInto();
+}
+async function loadTrashInto(){
+  const tb=$('#trashBody');if(!tb)return;
+  try{
+    const list=await gs('getTrash');
+    tb.innerHTML=list.length?list.map(t=>{const days=Math.max(0,Math.ceil((t.purgeAt-Date.now())/86400000));return `<tr><td class="mono">${esc(t.no)}</td><td>${esc(t.title)}<div class="readonly-note">${esc(t.dept||'')}${t.files?' · 📎 '+t.files:''}</div></td><td>${fmtDT(t.deletedAt)}<div class="readonly-note">${esc(t.deletedBy||'')}</div></td><td>${days} วัน</td><td style="white-space:nowrap"><button class="btn sm" data-trestore="${esc(t.id)}">กู้คืน</button> <button class="btn sm danger" data-tpurge="${esc(t.id)}">ลบถาวร</button></td></tr>`}).join(''):'<tr><td colspan="5" class="readonly-note">ถังขยะว่าง</td></tr>';
+  }catch(e){tb.innerHTML='<tr><td colspan="5" class="readonly-note">โหลดถังขยะไม่สำเร็จ</td></tr>'}
 }
 function closeModal(){const m=$('#modal');if(m&&m.hasAttribute('data-forced'))return;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
 
@@ -1257,7 +1315,7 @@ drawer.addEventListener('input',e=>{
 });
 drawer.addEventListener('change',e=>{
   const t=e.target;
-  if(t.id==='fileInput'){if(t.files&&t.files[0])uploadFileUI(openId,t.files[0]);t.value='';return}
+  if(t.id==='fileInput'||t.id==='imgInput'){if(t.files&&t.files[0])uploadFileUI(openId,t.files[0]);t.value='';return}
   const f=t.dataset.f;if(!f||!openId)return;
   if(f==='status'){setStatus(openId,t.value);return}
   if(f==='signed'){signItem(openId,t.checked);return}
@@ -1265,13 +1323,13 @@ drawer.addEventListener('change',e=>{
   patch(openId,{[f]:t.value});
 });
 drawer.addEventListener('click',e=>{
-  const t=e.target.closest('button,a[data-fopen]');if(!t)return;
+  const t=e.target.closest('button,a[data-fopen],figure[data-fopen]');if(!t)return;
   if(t.id==='dClose')return closeDrawer();
   if(t.id==='dPrint'){const it=findItem(openId);if(it)printItem(it);return}
   if(t.id==='dDone')return setStatus(openId,'done');
   if(t.id==='dDelete'){confirmDelete=true;renderDrawer();return}
   if(t.id==='dDeleteNo'){confirmDelete=false;renderDrawer();return}
-  if(t.id==='dDeleteYes'){const id=openId;openId=null;confirmDelete=false;removeItem(id);return}
+  if(t.id==='dDeleteYes'){const id=openId;openId=null;confirmDelete=false;removeItem(id);toast('ย้ายไปถังขยะแล้ว กู้คืนได้ที่ ⚙ ภายใน 7 วัน',true);return}
   if(t.id==='logAdd'){
     const ta=$('#logText');const text=(ta.value||'').trim();if(!text){ta.focus();return}
     logDraft[openId]='';addLogEntry(openId,text);return;
@@ -1317,6 +1375,11 @@ $('#modalHost').addEventListener('click',e=>{
     if(!u.username||!u.password){toast('กรอกชื่อผู้ใช้และรหัสผ่าน');return}
     t.disabled=true;gs('upsertUser',u).then(()=>{toast('เพิ่มผู้ใช้ '+u.username+' แล้ว');['nuUser','nuDisplay','nuEmail','nuPass'].forEach(i=>$('#'+i).value='');t.disabled=false;loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
+  }
+  if(t.dataset.trestore){t.disabled=true;gs('restoreItem',t.dataset.trestore).then(()=>{toast('กู้คืนใบงานแล้ว');refresh(true);loadTrashInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});return}
+  if(t.dataset.tpurge){
+    if(t.dataset.confirm!=='1'){t.dataset.confirm='1';t.textContent='ยืนยันลบถาวร?';return}
+    t.disabled=true;gs('purgeItem',t.dataset.tpurge).then(()=>{toast('ลบถาวรแล้ว');loadTrashInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);loadTrashInto()});return;
   }
   if(t.id==='digestOn'||t.id==='digestOff'||t.id==='digestTest'){
     t.disabled=true;
