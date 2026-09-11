@@ -335,6 +335,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .dslegend b,.dslegend .dsn{font-variant-numeric:tabular-nums}
 .dsbar{display:inline-block;width:120px;height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:6px}
 .dsbar b{display:block;height:100%;background:var(--accent)}
+.histwrap{overflow:auto;max-height:340px;border:1px solid var(--line);border-radius:4px}
+.utable.hist{font-size:13px}
+.utable.hist th{position:sticky;top:0;z-index:1}
+.utable.hist td{vertical-align:top;word-break:break-word}
 .linklist{font-size:13px;margin-top:6px;color:var(--muted);word-break:break-all}
 .linklist a{color:var(--accent)}
 .log .by{font-weight:600;color:var(--text)}
@@ -461,7 +465,7 @@ const C={"STATUSES":[{"id":"received","name":"รับเรื่อง","tone
 const STATUSES=C.STATUSES, PRIORITIES=C.PRIORITIES, ROLE_NAME=C.ROLE_NAME, DEFAULT_SETTINGS=C.DEFAULT_SETTINGS, WORKSPACES=C.WORKSPACES;
 const CLOSED=new Set(['done','cancel']);
 const SESSION_KEY='wo-civil-session';
-const WS_FUNCS=new Set(['getAll','saveItem','deleteItem','deleteExamples','addLog','deleteLog','uploadFile','deleteFile','getFile','getTrash','restoreItem','purgeItem']);
+const WS_FUNCS=new Set(['getAll','saveItem','deleteItem','deleteExamples','addLog','deleteLog','uploadFile','deleteFile','getFile','getTrash','restoreItem','purgeItem','getHistory']);
 
 /* ---------- state ---------- */
 let items={};            // ใบงานที่ยังไม่เซ็นรับ (พื้นที่งานปัจจุบัน)
@@ -482,6 +486,10 @@ const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, 
 let wsGen=0, lastReadTime=0; // wsGen เพิ่มทุกครั้งที่สลับแผนก ผลที่ตอบกลับของแผนกเดิมจะถูกทิ้ง
 let refreshing=false, refreshStartedAt=0, refreshPromise=null;
 let drawerStale=false, ptrDown=false, pendingLogs=0, newItemId=null;
+// เวอร์ชันข้อมูลที่ถืออยู่ (ส่งไปเช็คตอนรีเฟรชอัตโนมัติ) และประวัติการแก้ไขที่เปิดดูแล้ว
+const dataVer={active:'',archive:''}, fullAt={active:0,archive:0}, histCache={};
+const FULL_EVERY=10*60000; // อ่านข้อมูลเต็มอย่างน้อยทุก 10 นาที เผื่อมีคนแก้ในชีทโดยตรง
+function resetDataVer(){dataVer.active=dataVer.archive='';fullAt.active=fullAt.archive=0;Object.keys(histCache).forEach(k=>delete histCache[k])}
 const serverSnap={};
 
 function defaultFilters(){return {q:'',dept:'',month:'',exec:'',status:'open',sort:'due',tile:''}}
@@ -598,7 +606,7 @@ async function doLogin(e){
   try{
     const r=await gs('login',u,p);
     if(lastUser&&lastUser!==r.user.username){items={};archive={};openId=null;Object.keys(dirty).forEach(k=>delete dirty[k])}
-    session=r;saveSession();$('#lPass').value='';hideLogin();renderUser();mode='connecting';render();
+    resetDataVer();session=r;saveSession();$('#lPass').value='';hideLogin();renderUser();mode='connecting';render();
     await refresh(false);
     if(hasUnsaved()){toast('กำลังบันทึกงานที่ค้างอยู่…');retryAll()}
     if(session&&session.user.mustChange)showUserModal(true);
@@ -609,7 +617,7 @@ async function doLogout(){try{await gs('logout')}catch(e){}
   // ปิดหน้าต่างบังคับเปลี่ยนรหัสด้วย (ไม่ให้ค้างไปถึงคนที่ล็อกอินถัดไป) และทิ้งผลโหลดที่ยังค้างของบัญชีเดิม
   wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
   const fm=$('#modal');if(fm)fm.removeAttribute('data-forced');
-  clearFileCaches();
+  clearFileCaches();resetDataVer();
   clearSession();closeModal();render();showLogin('ออกจากระบบแล้ว')}
 
 /* ---------- โหลดข้อมูล ---------- */
@@ -649,25 +657,35 @@ function applyServer(list,target,readTime){
   });
   if(target==='archive')archive=next;else items=next;
 }
-let refreshGen=-1;
-function refresh(silent){
+let refreshGen=-1, refreshPoll=false;
+// refresh(silent) = อ่านข้อมูลเต็ม · refresh(silent,{poll:true}) = รอบอัตโนมัติ ส่งเวอร์ชันไปเช็คก่อน ไม่มีอะไรเปลี่ยนเซิร์ฟเวอร์ไม่ต้องอ่านชีท
+function refresh(silent,opts){
   if(!session)return Promise.resolve();
-  if(refreshing&&refreshPromise&&refreshGen===wsGen)return refreshPromise;
-  refreshGen=wsGen;refreshPromise=refreshRun(silent,wsGen);return refreshPromise;
+  const poll=!!(opts&&opts.poll);
+  if(refreshing&&refreshPromise&&refreshGen===wsGen){
+    if(!poll&&refreshPoll)return refreshPromise.then(()=>refresh(silent)); // รอบที่วิ่งอยู่เป็นแค่เช็คเวอร์ชัน แต่ผู้เรียกต้องการข้อมูลเต็ม
+    return refreshPromise;
+  }
+  refreshGen=wsGen;refreshPoll=poll;refreshPromise=refreshRun(silent,wsGen,poll);return refreshPromise;
 }
-async function refreshRun(silent,gen){
+async function refreshRun(silent,gen,poll){
   refreshing=true;
   try{
-    const r=await gs('getAll',{archive:false});
+    const useVer=poll&&dataVer.active&&Date.now()-fullAt.active<FULL_EVERY;
+    const r=await gs('getAll',{archive:false,ver:useVer?dataVer.active:''});
     if(gen!==wsGen)return; // สลับแผนกไปแล้ว ทิ้งผลของแผนกเดิม
     lastReadTime=r.serverTime||Date.now();
     if(r.me&&session){session.user=r.me;saveSession();renderUser()}
-    if(r.settings)settings=Object.assign(clone(DEFAULT_SETTINGS),r.settings);
     if(r.digest)digest=r.digest;
-    applyServer(r.items,'active',lastReadTime);
+    if(!r.unchanged){
+      if(r.settings)settings=Object.assign(clone(DEFAULT_SETTINGS),r.settings);
+      applyServer(r.items,'active',lastReadTime);
+      dataVer.active=r.ver||'';fullAt.active=Date.now();
+    }
+    const wasReady=mode==='sheet';
     mode='sheet';setSync(true,'เชื่อมกับ Google Sheet แล้ว');
-    renderBg();
-    if(page==='archive')loadArchive(false);
+    if(!r.unchanged||!wasReady)renderBg();
+    if(page==='archive')loadArchive(false,{poll:true});
   }catch(e){
     if(gen!==wsGen)return;
     console.warn('refresh failed',e);
@@ -676,18 +694,21 @@ async function refreshRun(silent,gen){
   }finally{if(gen===wsGen){refreshing=false;refreshPromise=null}}
 }
 let archiveLoading=false, archivePromise=null;
-function loadArchive(force){
+function loadArchive(force,opts){
   if(!session)return Promise.resolve();
   if(archiveLoading&&archivePromise)return archivePromise; // คืนงานที่กำลังโหลดอยู่ ไม่ใช่ promise ที่เสร็จแล้ว (กันวนไม่รู้จบ)
   if(!force&&Date.now()-archiveLoadedAt<60000)return Promise.resolve();
-  archivePromise=loadArchiveRun(wsGen);return archivePromise;
+  archivePromise=loadArchiveRun(wsGen,!force&&!!(opts&&opts.poll));return archivePromise;
 }
-async function loadArchiveRun(gen){
+async function loadArchiveRun(gen,poll){
   archiveLoading=true;
   try{
-    const r=await gs('getAll',{archive:true});
+    const useVer=poll&&archiveLoadedAt&&dataVer.archive&&Date.now()-fullAt.archive<FULL_EVERY;
+    const r=await gs('getAll',{archive:true,ver:useVer?dataVer.archive:''});
     if(gen!==wsGen)return;
-    applyServer(r.items,'archive',r.serverTime||Date.now());archiveLoadedAt=Date.now();
+    archiveLoadedAt=Date.now();
+    if(r.unchanged)return;
+    applyServer(r.items,'archive',r.serverTime||Date.now());dataVer.archive=r.ver||'';fullAt.archive=Date.now();
     if(page==='archive'){mode='sheet';renderBg()}else{renderFilters()}
   }catch(e){if(gen!==wsGen)return;console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
   finally{if(gen===wsGen){archiveLoading=false;archivePromise=null}}
@@ -696,8 +717,8 @@ function initStore(){
   applyWs();
   loadSession();renderUser();
   $('#loginForm').addEventListener('submit',doLogin);
-  setInterval(()=>{if(document.visibilityState==='visible'&&session)refresh(true)},60000);
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&session)refresh(true)});
+  setInterval(()=>{if(document.visibilityState==='visible'&&session)refresh(true,{poll:true})},60000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&session)refresh(true,{poll:true})});
   if(!session){showLogin('');return}
   refresh(false).then(()=>{if(session&&session.user.mustChange)showUserModal(true)});
 }
@@ -733,6 +754,7 @@ async function saveNow(id,attempt){
       if(!('no' in d2))cur.no=r.no;
       if(!('signed' in d2)){cur.signed=r.signed;cur.signedAt=r.signedAt;cur.signedBy=r.signedBy}
       if(r.files&&!uploading[id])cur.files=r.files;
+      if(histCache[id]&&histCache[id].rows)loadHistory(id,true);
       // ย้ายระหว่างงานปัจจุบัน <-> คลัง
       if(cur.signed&&items[id]){delete items[id];archive[id]=cur;archiveLoadedAt=0}
       else if(!cur.signed&&archive[id]){delete archive[id];items[id]=cur}
@@ -837,7 +859,7 @@ function deleteLogEntry(id,ts){
   const it=findItem(id);if(!it)return;
   const entry=(it.log||[]).find(l=>String(l.ts)===String(ts));if(!entry)return;
   it.log=it.log.filter(l=>l!==entry);renderDrawer();
-  gs('deleteLog',id,ts,entry.by).then(()=>toast('ลบบันทึกแล้ว')).catch(e=>{const cur=findItem(id);if(cur)cur.log=(cur.log||[]).concat([entry]);toast(cleanMsg(errMsg(e)),true);renderDrawerBg()});
+  gs('deleteLog',id,ts,entry.by).then(()=>{toast('ลบบันทึกแล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true)}).catch(e=>{const cur=findItem(id);if(cur)cur.log=(cur.log||[]).concat([entry]);toast(cleanMsg(errMsg(e)),true);renderDrawerBg()});
 }
 function setStatus(id,status){
   const it=findItem(id);if(!it||it.status===status||!canEditItem(it))return;
@@ -918,7 +940,7 @@ async function uploadFileUI(id,file){
   rd.onload=()=>{
     const b64=String(rd.result).split(',')[1];
     if(gen!==wsGen){delete uploading[id];return}
-    gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว')}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawerBg()});
+    gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true)}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawerBg()});
   };
   rd.onerror=()=>{delete uploading[id];toast('อ่านไฟล์ไม่ได้');renderDrawer()};
   rd.readAsDataURL(file);
@@ -945,7 +967,7 @@ function openFileUI(id,fileId){
 }
 function deleteFileUI(id,fileId){
   const it=findItem(id);if(!it)return;
-  gs('deleteFile',id,fileId).then(r=>{const cur=findItem(id);if(cur)cur.files=r.files;toast('ลบไฟล์แล้ว');renderDrawerBg()}).catch(e=>toast(cleanMsg(errMsg(e)),true));
+  gs('deleteFile',id,fileId).then(r=>{const cur=findItem(id);if(cur)cur.files=r.files;toast('ลบไฟล์แล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true);renderDrawerBg()}).catch(e=>toast(cleanMsg(errMsg(e)),true));
 }
 
 /* ---------- กรอง / เรียง ---------- */
@@ -1332,6 +1354,7 @@ function renderDrawer(){
         </div>`}
         <ul class="log">${logs.length?logs.map(l=>{const mine=l.u?(!!session&&String(l.u).toLowerCase()===String(session.user.username).toLowerCase()):(!!l.by&&l.by===me());const canDel=!ro&&(isAdmin()||mine)&&!l.pending;return `<li data-ts="${esc(l.ts)}"><span class="dot"></span><div><div class="when"><span class="mono">${fmtDT(l.ts)}</span>${l.by?`<span class="by">${esc(l.by)}</span>`:''}${l.status?chipStatus(l.status):''}${l.pending?'<span class="readonly-note">กำลังบันทึก…</span>':''}${canDel?`<button class="del" data-del="${esc(l.ts)}" title="ลบบันทึกนี้">ลบ</button>`:''}</div><div class="txt">${linkify(l.text)}</div></div></li>`}).join(''):'<li style="grid-template-columns:1fr"><span style="color:var(--faint);font-size:12.5px">ยังไม่มีบันทึก</span></li>'}</ul>
       </div>
+      <div class="sect"><h3>ประวัติการแก้ไข</h3>${histHtml(it)}</div>
       <div class="sect"><h3>อื่น ๆ</h3>
         <div class="danger-zone">
           ${canDeleteItem(it)?(confirmDelete?`<span style="color:var(--danger);font-size:13px">ย้ายใบงานนี้ไปถังขยะ? (${isAdmin()?'กู้คืนได้ภายใน 7 วัน':'ผู้ดูแลระบบกู้คืนได้ภายใน 7 วัน'})</span><button class="btn danger sm" id="dDeleteYes">ยืนยันลบ</button><button class="btn sm" id="dDeleteNo">ยกเลิก</button>`:`<button class="btn danger sm" id="dDelete">ลบใบงานนี้</button>`):`<span class="readonly-note">${it.signed&&session&&session.user.canDelete?'ใบงานที่เซ็นรับแล้ว ลบได้เฉพาะผู้ดูแลระบบ':'คุณไม่มีสิทธิ์ลบใบงาน'}</span>`}
@@ -1344,6 +1367,24 @@ function renderDrawer(){
   renderSaveState();
   const body=$('.dbody',dr);if(body&&keepFocus.scroll)body.scrollTop=keepFocus.scroll;
   if(keepFocus.name){const el=dr.querySelector(`[data-f="${keepFocus.name}"], #${keepFocus.name}`);if(el){el.focus({preventScroll:true});try{if(keepFocus.start!=null&&el.setSelectionRange)el.setSelectionRange(keepFocus.start,keepFocus.end)}catch(e){}}}
+}
+/* ---------- ประวัติการแก้ไข (โหลดเมื่อกดดู) ---------- */
+function histHtml(it){
+  const h=histCache[it.id];
+  if(!h)return '<button class="btn sm" id="dHist">ดูประวัติการแก้ไข</button> <span class="readonly-note">ใครเปลี่ยนช่องไหน จากค่าอะไรเป็นค่าอะไร</span>';
+  if(h.error&&!h.rows)return `<div class="readonly-note">โหลดประวัติไม่สำเร็จ: ${esc(h.error)}</div><button class="btn sm" id="dHist" style="margin-top:6px">ลองอีกครั้ง</button>`;
+  if(!h.rows)return '<div class="readonly-note">กำลังโหลดประวัติ…</div>';
+  if(!h.rows.length)return '<div class="readonly-note">ยังไม่มีประวัติการแก้ไข (ระบบเริ่มเก็บประวัติตั้งแต่ 11 ก.ย. 2569)</div>';
+  const cut=v=>{v=String(v||'');return v?esc(v.length>120?v.slice(0,117)+'…':v):'<span class="readonly-note">—</span>'};
+  return `<div class="histwrap"><table class="utable hist"><thead><tr><th>เวลา</th><th>โดย</th><th>ช่อง</th><th>จาก</th><th>เป็น</th></tr></thead><tbody>${h.rows.map(r=>`<tr><td class="mono" style="white-space:nowrap">${fmtDT(r.ts)}</td><td>${esc(r.by)}</td><td>${esc(r.field)}</td><td title="${esc(r.from)}">${cut(r.from)}</td><td title="${esc(r.to)}">${cut(r.to)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function loadHistory(id,bg){
+  const h=histCache[id]||(histCache[id]={});h.error='';
+  const gen=wsGen;
+  gs('getHistory',id).then(rows=>{if(gen===wsGen&&histCache[id]===h)h.rows=rows||[]})
+    .catch(e=>{if(gen===wsGen)h.error=cleanMsg(errMsg(e))})
+    .then(()=>{if(gen===wsGen&&openId===id)renderDrawerBg()});
+  if(!bg&&openId===id)renderDrawer();
 }
 function openItem(id){openId=id;confirmDelete=false;renderDrawer()}
 function closeDrawer(){openId=null;confirmDelete=false;renderDrawer()}
@@ -1495,9 +1536,13 @@ function showSettingsModal(){
     <div class="readonly-note" style="margin-bottom:8px">ส่งรายการ “เกินกำหนด / ครบกำหนดใน 7 วัน / เสร็จแล้วรอเซ็นรับ” ของทั้งสองแผนก ให้ผู้ดูแลระบบและเจ้าหน้าที่ทุกคนที่มีอีเมล วันละครั้ง (ไม่ส่งถ้าไม่มีรายการ)</div>
     <div class="grid"><div class="f"><label>สถานะ</label><div id="digestState" style="padding:6px 0">${digest.enabled?'<b style="color:var(--s-green-fg)">เปิดอยู่</b> ส่งทุกวันเวลา '+String(digest.hour).padStart(2,'0')+':00':'ปิดอยู่'}</div></div><div class="f"><label>เวลาส่ง</label><select id="digestHour">${hours}</select></div></div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="digestOn">${digest.enabled?'บันทึกเวลาใหม่':'เปิดใช้'}</button>${digest.enabled?'<button class="btn" id="digestOff">ปิด</button>':''}<button class="btn" id="digestTest">ส่งทดสอบมาที่อีเมลของฉัน</button></div>
+    <h2 style="margin-top:22px">สำรองข้อมูลอัตโนมัติ</h2>
+    <div class="readonly-note" style="margin-bottom:8px">ทุกคืนเวลา 02:00 ระบบคัดลอก Google Sheet ทั้งไฟล์ไปเก็บในโฟลเดอร์ “ใบงาน-สำรองข้อมูล” ใน Google Drive ของเจ้าของระบบ เก็บย้อนหลัง 30 วัน ถ้าข้อมูลในชีทเสียหาย เปิดไฟล์สำรองของวันก่อนหน้าแล้วคัดลอกแถวที่ต้องการกลับมาได้</div>
+    <div id="backupState" style="padding:4px 0">กำลังโหลด…</div>
+    <div class="actions" style="justify-content:flex-start" id="backupActions"></div>
     <div class="note" style="margin-top:12px">ข้อมูลทั้งหมดเก็บใน Google Sheet (ชีท “ใบงาน” / “บันทึกความคืบหน้า” / “ตั้งค่า” / “ผู้ใช้”) รหัสผ่านถูกเข้ารหัสแบบ hash ในชีท อ่านกลับไม่ได้</div>
   </div></div>`;
-  loadUsersInto();loadTrashInto();
+  loadUsersInto();loadTrashInto();loadBackupInto();
 }
 async function loadTrashInto(){
   const tb=$('#trashBody');if(!tb)return;
@@ -1505,6 +1550,16 @@ async function loadTrashInto(){
     const list=await gs('getTrash');
     tb.innerHTML=list.length?list.map(t=>{const days=Math.max(0,Math.ceil((t.purgeAt-Date.now())/86400000));return `<tr><td class="mono">${esc(t.no)}</td><td>${esc(t.title)}<div class="readonly-note">${esc(t.dept||'')}${t.files?' · 📎 '+t.files:''}</div></td><td>${fmtDT(t.deletedAt)}<div class="readonly-note">${esc(t.deletedBy||'')}</div></td><td>${days} วัน</td><td style="white-space:nowrap"><button class="btn sm" data-trestore="${esc(t.id)}">กู้คืน</button> <button class="btn sm danger" data-tpurge="${esc(t.id)}">ลบถาวร</button></td></tr>`}).join(''):'<tr><td colspan="5" class="readonly-note">ถังขยะว่าง</td></tr>';
   }catch(e){tb.innerHTML='<tr><td colspan="5" class="readonly-note">โหลดถังขยะไม่สำเร็จ</td></tr>'}
+}
+async function loadBackupInto(){
+  const st=$('#backupState');if(!st)return;
+  try{renderBackup(await gs('getBackupStatus'))}catch(e){st.textContent='โหลดสถานะการสำรองข้อมูลไม่สำเร็จ: '+cleanMsg(errMsg(e))}
+}
+function renderBackup(b){
+  const st=$('#backupState'),ac=$('#backupActions');if(!st||!ac)return;
+  const last=b.last?`สำรองล่าสุด ${fmtDT(b.last.at)} · <a href="${esc(safeUrl(b.last.url))}" target="_blank" rel="noopener noreferrer">เปิดไฟล์สำรอง</a> · มีสำเนาเก็บไว้ ${Number(b.last.kept)||0} ไฟล์`:'ยังไม่เคยสำรอง';
+  st.innerHTML=(b.enabled?`<b style="color:var(--s-green-fg)">เปิดอยู่</b> สำรองทุกวันเวลา ${String(b.hour).padStart(2,'0')}:00`:'<b style="color:var(--danger)">ปิดอยู่</b>')+' · '+last;
+  ac.innerHTML=`<button class="btn primary" id="backupNow">สำรองตอนนี้</button>${b.enabled?'<button class="btn" id="backupOff">ปิดการสำรองอัตโนมัติ</button>':'<button class="btn" id="backupOn">เปิดการสำรองอัตโนมัติ</button>'}`;
 }
 function closeModal(){const m=$('#modal');if(m&&m.hasAttribute('data-forced'))return;execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
 
@@ -1520,7 +1575,7 @@ $('#wsSel').addEventListener('change',e=>{
   ws=WORKSPACES[e.target.value]?e.target.value:'civil';
   try{localStorage.setItem('wo-workspace',ws)}catch(x){}
   wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
-  clearFileCaches();
+  clearFileCaches();resetDataVer();
   items={};archive={};archiveLoadedAt=0;openId=null;page='active';filters=defaultFilters();mode='connecting';
   applyWs();render();refresh(false);
 });
@@ -1586,6 +1641,7 @@ drawer.addEventListener('click',e=>{
   const t=e.target.closest('button,a[data-fopen],figure[data-fopen]');if(!t)return;
   if(t.id==='dClose')return closeDrawer();
   if(t.id==='dPrint'){const it=findItem(openId);if(it)printItem(it);return}
+  if(t.id==='dHist'){loadHistory(openId);return}
   if(t.id==='dDone')return setStatus(openId,'done');
   if(t.id==='dDelete'){confirmDelete=true;renderDrawer();return}
   if(t.id==='dDeleteNo'){confirmDelete=false;renderDrawer();return}
@@ -1666,6 +1722,12 @@ $('#modalHost').addEventListener('click',e=>{
     t.disabled=true;
     const p=t.id==='digestOn'?gs('enableDailyDigest',$('#digestHour').value):t.id==='digestOff'?gs('disableDailyDigest'):gs('sendTestDigest');
     p.then(r=>{if(t.id==='digestTest'){toast('ส่งอีเมลทดสอบไปที่ '+r.to+' แล้ว',true);t.disabled=false}else{digest=r;toast(r.enabled?'เปิดอีเมลสรุปประจำวันแล้ว':'ปิดอีเมลสรุปประจำวันแล้ว');showSettingsModal()}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
+    return;
+  }
+  if(t.id==='backupNow'||t.id==='backupOn'||t.id==='backupOff'){
+    t.disabled=true;if(t.id==='backupNow')toast('กำลังคัดลอกชีท อาจใช้เวลาครึ่งนาที…',true);
+    const p=t.id==='backupNow'?gs('backupNow'):gs('setBackup',t.id==='backupOn');
+    p.then(b=>{renderBackup(b);toast(t.id==='backupNow'?'สำรองข้อมูลแล้ว':(b.enabled?'เปิดการสำรองอัตโนมัติแล้ว':'ปิดการสำรองอัตโนมัติแล้ว'))}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
   }
   if(t.id==='sSave'){
