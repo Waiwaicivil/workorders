@@ -400,7 +400,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     <div class="field grow"><input id="q" type="search" placeholder="ค้นหา เลขที่ / หัวข้อ / สถานที่ / ผู้ขอ / ผู้รับผิดชอบ"></div>
     <div class="field"><select id="fMonth"><option value="">ทุกเดือนที่รับเรื่อง</option></select></div>
     <div class="field" style="min-width:230px"><input id="fDept" data-combo="depts" placeholder="แผนก: พิมพ์รหัสหรือชื่อเพื่อค้นหา" autocomplete="off"></div>
-    <div class="field"><select id="fExec"><option value="">ทุกผู้ดำเนินการ</option></select></div>
+    <div class="field" style="min-width:210px"><input id="fExec" data-combo="execs" placeholder="ผู้ดำเนินการ: พิมพ์เพื่อค้นหา" autocomplete="off"></div>
     <button class="btn sm" id="btnExecStats" title="สรุปจำนวนงานของแต่ละผู้ดำเนินการ">📊 ผู้ดำเนินการ</button>
     <div class="field" id="fStatusWrap"><select id="fStatus">
       <option value="open">งานที่ยังเปิดอยู่</option>
@@ -473,6 +473,14 @@ const serverSnap={};
 function defaultFilters(){return {q:'',dept:'',month:'',exec:'',status:'open',sort:'due',tile:''}}
 function execOf(it){return it.assignee==='ผู้รับเหมา'?('ผู้รับเหมา: '+(it.contractor||'ไม่ระบุชื่อ')):(it.assignee?'ภายในแผนก':'')}
 function execKey(it){return it.assignee==='ผู้รับเหมา'?'c:'+(it.contractor||''):(it.assignee?'in':'')}
+function execLabels(){const names=Array.from(new Set((settings.contractors||[]).concat(Object.values(items).concat(Object.values(archive)).filter(it=>it.assignee==='ผู้รับเหมา'&&it.contractor).map(it=>it.contractor))));return ['ภายในแผนก','ผู้รับเหมา (ทุกเจ้า)'].concat(names.map(n=>'ผู้รับเหมา: '+n))}
+function execPred(){
+  const t=String(filters.exec||'').trim();if(!t)return null;
+  if(t==='ภายในแผนก')return it=>it.assignee==='ภายในแผนก';
+  if(t==='ผู้รับเหมา (ทุกเจ้า)')return it=>it.assignee==='ผู้รับเหมา';
+  if(t.startsWith('ผู้รับเหมา: '))return it=>it.assignee==='ผู้รับเหมา'&&(it.contractor||'')===t.slice(12);
+  const q=t.toLowerCase();return it=>execOf(it).toLowerCase().includes(q);
+}
 function pool(){return page==='archive'?archive:items}
 function findItem(id){return items[id]||archive[id]||null}
 function canEdit(){return !!session&&(session.user.role==='admin'||session.user.role==='staff')}
@@ -861,7 +869,7 @@ function visibleItems(){
   const q=filters.q.trim().toLowerCase();
   let arr=Object.values(pool()).filter(it=>page==='archive'?!!it.signed:!it.signed);
   if(filters.dept){const dq=filters.dept.trim().toLowerCase();arr=arr.filter(it=>String(it.dept||'').toLowerCase().includes(dq))}
-  if(filters.exec){arr=arr.filter(it=>filters.exec==='in'?it.assignee==='ภายในแผนก':filters.exec==='c:'?it.assignee==='ผู้รับเหมา':execKey(it)===filters.exec)}
+  const ep=execPred();if(ep)arr=arr.filter(ep);
   if(filters.month)arr=arr.filter(it=>String(it.received||'').slice(0,7)===filters.month);
   const st=page==='archive'?'all':(filters.tile||filters.status);
   if(st==='open')arr=arr.filter(it=>it.status!=='cancel');
@@ -941,11 +949,7 @@ function renderFilters(){
   fm.value=filters.month;
   const g=$('#fStatusGroup');
   if(!g.children.length)g.innerHTML=STATUSES.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
-  const fe=$('#fExec');
-  const names=Array.from(new Set((settings.contractors||[]).concat(Object.values(items).concat(Object.values(archive)).filter(it=>it.assignee==='ผู้รับเหมา'&&it.contractor).map(it=>it.contractor))));
-  const eh='<option value="">ทุกผู้ดำเนินการ</option><option value="in">ภายในแผนก</option><option value="c:">ผู้รับเหมา (ทุกเจ้า)</option>'+names.map(n=>`<option value="c:${esc(n)}">ผู้รับเหมา: ${esc(n)}</option>`).join('');
-  if(fe.innerHTML!==eh)fe.innerHTML=eh;
-  fe.value=filters.exec;if(fe.value!==filters.exec){filters.exec='';fe.value=''}
+  if($('#fExec').value!==filters.exec&&document.activeElement!==$('#fExec'))$('#fExec').value=filters.exec;
   renderExecStrip();
   $('#fStatus').value=filters.tile||filters.status;
 }
@@ -961,11 +965,11 @@ function execStats(pred,usePeriod){
 function renderExecStrip(){
   let el=$('#execStrip');
   if(!el){el=document.createElement('div');el.id='execStrip';el.className='execstrip hidden';$('.toolbar').insertAdjacentElement('afterend',el)}
-  if(!filters.exec){el.classList.add('hidden');return}
+  const pred=execPred();
+  if(!pred){el.classList.add('hidden');return}
   if(!archiveLoadedAt)loadArchive(false);
-  const pred=it=>filters.exec==='in'?it.assignee==='ภายในแผนก':filters.exec==='c:'?it.assignee==='ผู้รับเหมา':execKey(it)===filters.exec;
   const st=execStats(pred);
-  const label=filters.exec==='in'?'ภายในแผนก':filters.exec==='c:'?'ผู้รับเหมาทุกเจ้า':'ผู้รับเหมา '+filters.exec.slice(2);
+  const label=filters.exec.trim();
   el.innerHTML=`<b>${esc(label)}</b><span>ทั้งหมด <b>${st.total}</b></span><span>รับเรื่องเดือนนี้ <b>${st.month}</b></span><span>กำลังทำ <b>${st.open}</b></span><span class="${st.over?'warn':''}">เกินกำหนด <b>${st.over}</b></span><span>เสร็จ รอเซ็น <b>${st.pending}</b></span><span>เซ็นรับแล้ว <b>${st.signed}</b></span>${archiveLoadedAt?'':'<span class="readonly-note">(กำลังโหลดคลังงาน…)</span>'}`;
   el.classList.remove('hidden');
 }
@@ -1360,6 +1364,7 @@ $('#q').addEventListener('input',e=>{filters.q=e.target.value;renderMain()});
 $('#fDept').addEventListener('input',e=>{filters.dept=e.target.value;renderMain()});
 $('#fDept').addEventListener('change',e=>{filters.dept=e.target.value;renderMain()});
 $('#fMonth').addEventListener('change',e=>{filters.month=e.target.value;renderMain()});
+$('#fExec').addEventListener('input',e=>{filters.exec=e.target.value;renderExecStrip();renderMain()});
 $('#fExec').addEventListener('change',e=>{filters.exec=e.target.value;renderExecStrip();renderMain()});
 $('#btnExecStats').addEventListener('click',showExecStatsModal);
 $('#fStatus').addEventListener('change',e=>{filters.status=e.target.value;filters.tile='';render()});
@@ -1436,7 +1441,7 @@ $('#modalHost').addEventListener('click',e=>{
   const t=e.target;
   if(t.id==='mCancel'||t.id==='modal')return closeModal();
   if(t.id==='esPickBtn'){execPickOpen=!execPickOpen;$('#esPickMenu').classList.toggle('hidden',!execPickOpen);return}
-  if(t.dataset.execfilter!==undefined){filters.exec=t.dataset.execfilter;closeModal();page='active';render();return}
+  if(t.dataset.execfilter!==undefined){const k=t.dataset.execfilter;filters.exec=k==='in'?'ภายในแผนก':'ผู้รับเหมา: '+k.slice(2);closeModal();page='active';render();return}
   if(t.id==='mSave')return createItem();
   if(t.id==='uLogout'){doLogout();return}
   if(t.id==='pwSave'){
@@ -1486,7 +1491,7 @@ $('#modalHost').addEventListener('click',e=>{
 /* ---------- combo (ช่องเลือกแบบพิมพ์ค้นหา) ---------- */
 const comboEl=document.createElement('div');comboEl.className='combo hidden';document.body.appendChild(comboEl);
 let comboInput=null,comboItems=[],comboIdx=-1;
-function comboSource(name){return name==='depts'?settings.depts:name==='contractors'?(settings.contractors||[]):[]}
+function comboSource(name){return name==='depts'?settings.depts:name==='contractors'?(settings.contractors||[]):name==='execs'?execLabels():[]}
 function comboMatches(name,q){
   const list=comboSource(name);q=q.trim().toLowerCase();
   if(!q)return list.slice();
@@ -1498,7 +1503,8 @@ function comboOpen(input){
   comboInput=input;comboIdx=-1;
   comboItems=comboMatches(input.dataset.combo,input.value);
   const q=input.value.trim();
-  comboEl.innerHTML=comboItems.length?comboItems.map((d,i)=>{const m=d.match(/^(\S+)\s+(.*)$/);return `<div data-i="${i}">${m?'<span class="code">'+esc(m[1])+'</span>'+esc(m[2]):esc(d)}</div>`}).join(''):`<div class="none">ไม่พบแผนกที่ตรงกับ “${esc(q)}” ${q?'· ใช้ค่าที่พิมพ์ได้เลย':''}</div>`;
+  const split=input.dataset.combo==='depts';
+  comboEl.innerHTML=comboItems.length?comboItems.map((d,i)=>{const m=split?d.match(/^(\S+)\s+(.*)$/):null;return `<div data-i="${i}">${m?'<span class="code">'+esc(m[1])+'</span>'+esc(m[2]):esc(d)}</div>`}).join(''):`<div class="none">ไม่พบรายการที่ตรงกับ “${esc(q)}” ${q?'· ใช้ค่าที่พิมพ์ได้เลย':''}</div>`;
   const r=input.getBoundingClientRect();
   comboEl.style.left=r.left+'px';comboEl.style.width=Math.max(r.width,260)+'px';
   const below=window.innerHeight-r.bottom;
