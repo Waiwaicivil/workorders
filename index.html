@@ -485,6 +485,7 @@ function pool(){return page==='archive'?archive:items}
 function findItem(id){return items[id]||archive[id]||null}
 function canEdit(){return !!session&&(session.user.role==='admin'||session.user.role==='staff')}
 function isAdmin(){return !!session&&session.user.role==='admin'}
+function canDeleteItem(it){return isAdmin()||(!!session&&session.user.role==='staff'&&!!session.user.canDelete&&!(it&&it.signed))}
 function canEditItem(it){return canEdit()&&(!it.signed||isAdmin())}
 function me(){return session?(session.user.display||session.user.username):''}
 
@@ -737,8 +738,7 @@ function renderUnsaved(){
   if(bad.length)$('#unsavedText').textContent='มี '+bad.length+' ใบงานที่ยังบันทึกลงชีทไม่สำเร็จ ('+bad.map(id=>findItem(id).no||'ใหม่').join(', ')+') ข้อมูลยังอยู่ในเครื่องนี้ อย่าเพิ่งปิดหน้า';
 }
 function removeItem(id){
-  if(!isAdmin())return;
-  const it=findItem(id);if(!it)return;
+  const it=findItem(id);if(!it||!canDeleteItem(it))return;
   delete items[id];delete archive[id];render();
   gs('deleteItem',id).catch(e=>{toast(cleanMsg(errMsg(e)),true);refresh(true)});
 }
@@ -1172,7 +1172,7 @@ function renderDrawer(){
       </div>
       <div class="sect"><h3>อื่น ๆ</h3>
         <div class="danger-zone">
-          ${isAdmin()?(confirmDelete?`<span style="color:var(--danger);font-size:13px">ย้ายใบงานนี้ไปถังขยะ? (กู้คืนได้ภายใน 7 วัน)</span><button class="btn danger sm" id="dDeleteYes">ยืนยันลบ</button><button class="btn sm" id="dDeleteNo">ยกเลิก</button>`:`<button class="btn danger sm" id="dDelete">ลบใบงานนี้</button>`):'<span class="readonly-note">การลบใบงานทำได้เฉพาะผู้ดูแลระบบ</span>'}
+          ${canDeleteItem(it)?(confirmDelete?`<span style="color:var(--danger);font-size:13px">ย้ายใบงานนี้ไปถังขยะ? (${isAdmin()?'กู้คืนได้ภายใน 7 วัน':'ผู้ดูแลระบบกู้คืนได้ภายใน 7 วัน'})</span><button class="btn danger sm" id="dDeleteYes">ยืนยันลบ</button><button class="btn sm" id="dDeleteNo">ยกเลิก</button>`:`<button class="btn danger sm" id="dDelete">ลบใบงานนี้</button>`):`<span class="readonly-note">${it.signed&&session&&session.user.canDelete?'ใบงานที่เซ็นรับแล้ว ลบได้เฉพาะผู้ดูแลระบบ':'คุณไม่มีสิทธิ์ลบใบงาน'}</span>`}
         </div>
       </div>
     </div>
@@ -1292,7 +1292,7 @@ function showUserModal(forced){
 }
 let usersCache=[];
 function userRows(){
-  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td style="text-align:center"><input type="checkbox" data-uf="simpleForm" ${u.simpleForm?'checked':''} title="ฟอร์มใบงานใหม่แบบย่อ (ซ่อนประเภทงาน/ผู้รับผิดชอบ/วันเริ่ม/กำหนดเสร็จ/รายละเอียด)"></td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
+  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td style="text-align:center"><input type="checkbox" data-uf="simpleForm" ${u.simpleForm?'checked':''} title="ฟอร์มใบงานใหม่แบบย่อ (ซ่อนประเภทงาน/ผู้รับผิดชอบ/วันเริ่ม/กำหนดเสร็จ/รายละเอียด)"></td><td style="text-align:center">${u.role==='admin'?'<span class="readonly-note">ทุกสิทธิ์</span>':`<input type="checkbox" data-uf="canDelete" ${u.canDelete?'checked':''} title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">`}</td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
 }
 async function loadUsersInto(){
   try{usersCache=await gs('listUsers');const tb=$('#uBody');if(tb)tb.innerHTML=userRows()}catch(e){toast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ')}
@@ -1310,7 +1310,7 @@ function showSettingsModal(){
     <div class="actions"><button class="btn" id="mCancel">ปิด</button><button class="btn primary" id="sSave">บันทึกรายการ</button></div>
     <h2 style="margin-top:22px">ผู้ใช้และสิทธิ์</h2>
     <div class="readonly-note" style="margin-bottom:8px">ผู้ดูแลระบบ = ทำได้ทุกอย่าง รวมเซ็นรับงาน/ลบ/ตั้งค่า · เจ้าหน้าที่ = เพิ่ม/แก้ใบงานและบันทึกความคืบหน้า · ดูอย่างเดียว = เปิดดูเท่านั้น · ผู้ใช้ใหม่หรือถูกตั้งรหัสให้ จะถูกบังคับเปลี่ยนรหัสตอนเข้าครั้งแรก</div>
-    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th title="ฟอร์มใบงานใหม่แบบย่อ">ฟอร์มย่อ</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="7" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
+    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th title="ฟอร์มใบงานใหม่แบบย่อ">ฟอร์มย่อ</th><th title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">ลบใบงานได้</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="8" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
     <h3 style="font-size:14px;margin:16px 0 6px">เพิ่มผู้ใช้ใหม่</h3>
     <div class="grid">
       <div class="f"><label>ชื่อผู้ใช้ (a-z, 0-9)</label><input id="nuUser" autocapitalize="off" spellcheck="false"></div>
@@ -1319,6 +1319,7 @@ function showSettingsModal(){
       <div class="f"><label>อีเมล (ถ้าต้องการรับแจ้งเตือน)</label><input id="nuEmail" type="email"></div>
       <div class="f"><label>รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label><input id="nuPass" type="password" autocomplete="new-password"></div>
       <div class="f"><label>ฟอร์มใบงานใหม่</label><select id="nuSimple"><option value="">เต็ม</option><option value="1">ย่อ (เฉพาะช่องจำเป็น)</option></select></div>
+      <div class="f"><label>ลบใบงาน (เจ้าหน้าที่)</label><select id="nuCanDelete"><option value="">ไม่ได้</option><option value="1">ลบได้ แต่เข้าถังขยะไม่ได้</option></select></div>
     </div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="nuAdd">เพิ่มผู้ใช้</button></div>
     <h2 style="margin-top:22px">ถังขยะ · ${esc(WORKSPACES[ws].name)}</h2>
@@ -1420,7 +1421,7 @@ drawer.addEventListener('click',e=>{
   if(t.id==='dDone')return setStatus(openId,'done');
   if(t.id==='dDelete'){confirmDelete=true;renderDrawer();return}
   if(t.id==='dDeleteNo'){confirmDelete=false;renderDrawer();return}
-  if(t.id==='dDeleteYes'){const id=openId;openId=null;confirmDelete=false;removeItem(id);toast('ย้ายไปถังขยะแล้ว กู้คืนได้ที่ ⚙ ภายใน 7 วัน',true);return}
+  if(t.id==='dDeleteYes'){const id=openId;openId=null;confirmDelete=false;removeItem(id);toast(isAdmin()?'ย้ายไปถังขยะแล้ว กู้คืนได้ที่ ⚙ ภายใน 7 วัน':'ย้ายไปถังขยะแล้ว ถ้าลบผิด แจ้งผู้ดูแลระบบให้กู้คืนภายใน 7 วัน',true);return}
   if(t.id==='logAdd'){
     const ta=$('#logText');const text=(ta.value||'').trim();if(!text){ta.focus();return}
     logDraft[openId]='';addLogEntry(openId,text);return;
@@ -1443,7 +1444,7 @@ $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='esYear'||e.target.id==='esMonth'){execPeriod.y=$('#esYear').value;execPeriod.m=$('#esMonth').value;showExecStatsModal();return}
   if(e.target.id==='esAll'){execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
   if(e.target.dataset.espick!==undefined){const k=e.target.dataset.espick;if(!execPick)execPick=new Set();if(e.target.checked)execPick.add(k);else execPick.delete(k);if(!execPick.size)execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
-  const cb=e.target;if(!cb||cb.dataset.uf!=='simpleForm')return;
+  const cb=e.target;if(!cb||(cb.dataset.uf!=='simpleForm'&&cb.dataset.uf!=='canDelete'))return;
   const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
 });
 $('#modalHost').addEventListener('click',e=>{
@@ -1462,8 +1463,8 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.dataset.usave){
-    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,password:$('[data-uf="password"]',tr).value};
-    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto();if(session&&u.username===session.user.username){session.user.simpleForm=u.simpleForm;session.user.email=u.email;saveSession();refresh(true)}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
+    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,canDelete:!!($('[data-uf="canDelete"]',tr)&&$('[data-uf="canDelete"]',tr).checked),password:$('[data-uf="password"]',tr).value};
+    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto();if(session&&u.username===session.user.username){session.user.simpleForm=u.simpleForm;if(!isAdmin())session.user.canDelete=u.canDelete;session.user.email=u.email;saveSession();refresh(true)}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
   }
   if(t.dataset.udel){
@@ -1472,7 +1473,7 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.id==='nuAdd'){
-    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),simpleForm:!!$('#nuSimple').value,password:$('#nuPass').value};
+    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),simpleForm:!!$('#nuSimple').value,canDelete:!!$('#nuCanDelete').value,password:$('#nuPass').value};
     if(!u.username||!u.password){toast('กรอกชื่อผู้ใช้และรหัสผ่าน');return}
     t.disabled=true;gs('upsertUser',u).then(()=>{toast('เพิ่มผู้ใช้ '+u.username+' แล้ว');['nuUser','nuDisplay','nuEmail','nuPass'].forEach(i=>$('#'+i).value='');t.disabled=false;loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
