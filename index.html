@@ -466,7 +466,8 @@ let filters=defaultFilters();
 let openId=null, confirmDelete=false;
 let digest={enabled:false,hour:8};
 // การบันทึก
-const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, logDraft={};
+const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, logDraft={}, inflight={}, ackAt={}; // ackAt = เวลาบนเซิร์ฟเวอร์ของการบันทึกล่าสุดที่เครื่องนี้ได้รับยืนยัน
+let wsGen=0, lastReadTime=0; // wsGen เพิ่มทุกครั้งที่สลับแผนก ผลที่ตอบกลับของแผนกเดิมจะถูกทิ้ง
 let refreshing=false, refreshStartedAt=0, refreshPromise=null;
 const serverSnap={};
 
@@ -587,65 +588,91 @@ async function doLogin(e){
   }catch(err){$('#lErr').textContent=cleanMsg(errMsg(err))}
   finally{$('#lBtn').disabled=false;$('#lBtn').textContent='เข้าสู่ระบบ'}
 }
-async function doLogout(){try{await gs('logout')}catch(e){}clearSession();closeModal();render();showLogin('ออกจากระบบแล้ว')}
+async function doLogout(){try{await gs('logout')}catch(e){}
+  // ปิดหน้าต่างบังคับเปลี่ยนรหัสด้วย (ไม่ให้ค้างไปถึงคนที่ล็อกอินถัดไป) และทิ้งผลโหลดที่ยังค้างของบัญชีเดิม
+  wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
+  const fm=$('#modal');if(fm)fm.removeAttribute('data-forced');
+  clearSession();closeModal();render();showLogin('ออกจากระบบแล้ว')}
 
 /* ---------- โหลดข้อมูล ---------- */
 function setSync(on,label){
   const el=$('#sync');el.classList.toggle('on',on);el.querySelector('span').textContent=label;
   const d=$('#syncDot');if(d)d.classList.toggle('on',on);
 }
-function mergeLogs(serverLog,localLog){
+function mergeLogs(serverLog,localLog,since){
   const out=(serverLog||[]).slice();const have=new Set(out.map(l=>String(l.ts)));
-  (localLog||[]).forEach(l=>{if(!have.has(String(l.ts))&&(l.pending||(l.ts||0)>refreshStartedAt-500))out.push(l)});
+  (localLog||[]).forEach(l=>{if(!have.has(String(l.ts))&&(l.pending||(l.ts||0)>since))out.push(l)});
   return out;
 }
-function applyServer(list,target){
-  const cur=target==='archive'?archive:items;
+function applyServer(list,target,readTime){
+  const cur=target==='archive'?archive:items, other=target==='archive'?items:archive;
+  const since=(readTime||Date.now())-15000;
   const next={};
-  (list||[]).forEach(d=>{next[d.id]=d;base[d.id]=d.updatedAt||0;serverSnap[d.id]=clone(d)});
+  (list||[]).forEach(d=>{
+    serverSnap[d.id]=clone(d);
+    const loc=cur[d.id]||other[d.id];
+    const pend=Object.assign({},inflight[d.id]||{},dirty[d.id]||{});
+    const busy=!!saving[d.id]||!!writeTimers[d.id]||Object.keys(pend).length>0;
+    // สำเนาจากชีทเก่ากว่าที่เครื่องนี้มีอยู่ (อ่านก่อนเราบันทึก/เซ็นรับเสร็จ) → ใช้ของเครื่องนี้ ไม่ย้ายกลุ่ม
+    if(loc&&(ackAt[d.id]||0)>(d.updatedAt||0)){if(cur[d.id])next[d.id]=loc;return}
+    if(loc){d.log=mergeLogs(d.log,loc.log,since);if(uploading[d.id]&&loc.files)d.files=loc.files}
+    // มีงานค้าง: วางค่าที่ยังไม่บันทึก/กำลังบันทึกทับ และไม่ขยับ base → ถ้ามีคนแก้ชน การบันทึกถัดไปจะได้ CONFLICT
+    if(busy)Object.assign(d,pend);
+    else base[d.id]=Math.max(base[d.id]||0,d.updatedAt||0);
+    if(other[d.id])delete other[d.id];
+    next[d.id]=d;
+  });
   Object.keys(cur).forEach(id=>{
-    const loc=cur[id];const d=dirty[id];const hasDirty=d&&Object.keys(d).length;
-    const busy=!!saving[id]||!!writeTimers[id]||hasDirty;
-    const fresh=(loc.updatedAt||0)>refreshStartedAt-500;
-    if(next[id]){
-      next[id].log=mergeLogs(next[id].log,loc.log);
-      if(busy){Object.assign(next[id],d||{});next[id].updatedAt=Math.max(next[id].updatedAt||0,loc.updatedAt||0)}
-    }else if(busy||fresh){
-      next[id]=loc;
-    }
+    if(next[id])return;
+    const loc=cur[id];
+    const busy=!!saving[id]||!!writeTimers[id]||!!inflight[id]||!!(dirty[id]&&Object.keys(dirty[id]).length);
+    // ไม่อยู่ในรายการจากชีท: เก็บไว้ถ้ายังมีงานค้าง หรือเพิ่งสร้าง/ย้ายมาหลังเวลาที่ชีทถูกอ่าน
+    if(busy||(ackAt[id]||0)>since)next[id]=loc;
   });
   if(target==='archive')archive=next;else items=next;
 }
+let refreshGen=-1;
 function refresh(silent){
   if(!session)return Promise.resolve();
-  if(refreshing&&refreshPromise)return refreshPromise;
-  refreshPromise=refreshRun(silent);return refreshPromise;
+  if(refreshing&&refreshPromise&&refreshGen===wsGen)return refreshPromise;
+  refreshGen=wsGen;refreshPromise=refreshRun(silent,wsGen);return refreshPromise;
 }
-async function refreshRun(silent){
-  refreshing=true;refreshStartedAt=Date.now();
+async function refreshRun(silent,gen){
+  refreshing=true;
   try{
     const r=await gs('getAll',{archive:false});
+    if(gen!==wsGen)return; // สลับแผนกไปแล้ว ทิ้งผลของแผนกเดิม
+    lastReadTime=r.serverTime||Date.now();
     if(r.me&&session){session.user=r.me;saveSession();renderUser()}
     if(r.settings)settings=Object.assign(clone(DEFAULT_SETTINGS),r.settings);
     if(r.digest)digest=r.digest;
-    applyServer(r.items,'active');
+    applyServer(r.items,'active',lastReadTime);
     mode='sheet';setSync(true,'เชื่อมกับ Google Sheet แล้ว');
     render();
     if(page==='archive')loadArchive(false);
   }catch(e){
+    if(gen!==wsGen)return;
     console.warn('refresh failed',e);
     setSync(false,'เชื่อมต่อชีทไม่ได้');
     if(!silent){mode='error';render()}
-  }finally{refreshing=false;refreshPromise=null}
+  }finally{if(gen===wsGen){refreshing=false;refreshPromise=null}}
 }
-let archiveLoading=false;
-async function loadArchive(force){
-  if(!session||archiveLoading)return;
-  if(!force&&Date.now()-archiveLoadedAt<60000)return;
-  archiveLoading=true;refreshStartedAt=Date.now();
-  try{const r=await gs('getAll',{archive:true});applyServer(r.items,'archive');archiveLoadedAt=Date.now();if(page==='archive'){mode='sheet';render()}else{renderFilters()}}
-  catch(e){console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
-  finally{archiveLoading=false}
+let archiveLoading=false, archivePromise=null;
+function loadArchive(force){
+  if(!session)return Promise.resolve();
+  if(archiveLoading&&archivePromise)return archivePromise; // คืนงานที่กำลังโหลดอยู่ ไม่ใช่ promise ที่เสร็จแล้ว (กันวนไม่รู้จบ)
+  if(!force&&Date.now()-archiveLoadedAt<60000)return Promise.resolve();
+  archivePromise=loadArchiveRun(wsGen);return archivePromise;
+}
+async function loadArchiveRun(gen){
+  archiveLoading=true;
+  try{
+    const r=await gs('getAll',{archive:true});
+    if(gen!==wsGen)return;
+    applyServer(r.items,'archive',r.serverTime||Date.now());archiveLoadedAt=Date.now();
+    if(page==='archive'){mode='sheet';render()}else{renderFilters()}
+  }catch(e){if(gen!==wsGen)return;console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
+  finally{if(gen===wsGen){archiveLoading=false;archivePromise=null}}
 }
 function initStore(){
   applyWs();
@@ -673,11 +700,12 @@ async function saveNow(id,attempt){
   const it=findItem(id);if(!it||!canEdit())return;
   if(saving[id]){saveAgain[id]=true;return}
   const sent=Object.assign({},dirty[id]||{});dirty[id]={};
-  saving[id]=true;setSaveState(id,'saving');
+  saving[id]=true;inflight[id]=sent;setSaveState(id,'saving');
   let ok=false;
   try{
     const doc=clone(it);delete doc.log;delete doc.files;doc.base=base[id]||0;
     const r=await gs('saveItem',doc);
+    delete inflight[id];ackAt[id]=r.updatedAt;
     const cur=findItem(id);
     if(cur){
       base[id]=r.updatedAt;cur.updatedAt=r.updatedAt;cur.updatedBy=r.updatedBy;
@@ -692,6 +720,7 @@ async function saveNow(id,attempt){
     }
     setSaveState(id,'saved');ok=true;
   }catch(e){
+    delete inflight[id];
     const m=errMsg(e);
     if(m.indexOf('GONE:')>=0){
       delete items[id];delete archive[id];delete dirty[id];delete saveState[id];
@@ -703,10 +732,18 @@ async function saveNow(id,attempt){
       dirty[id]=Object.assign(sent,dirty[id]||{});
       saving[id]=false;
       toast('มีคนแก้ใบงานนี้ก่อนหน้า กำลังรวมข้อมูล…',true);
-      if(archive[id])await loadArchive(true);else await refresh(true);
+      // โหลดทั้งงานปัจจุบันและคลัง (ใบอาจถูกเซ็นรับ/ยกเลิกเซ็นจากเครื่องอื่น)
+      await Promise.all([refresh(true),loadArchive(true)]);
       const snap=serverSnap[id];
       if(snap){const clash=Object.keys(dirty[id]||{}).filter(f=>f!=='updatedAt'&&String(snap[f]==null?'':snap[f])!==String(dirty[id][f]==null?'':dirty[id][f])&&String(snap[f]==null?'':snap[f])!==String(sent[f]==null?'':sent[f]));
-        if(clash.length)toast('ช่อง '+clash.map(f=>FIELD_TH[f]||f).join(', ')+' ถูก '+(snap.updatedBy||'ผู้ใช้อื่น')+' แก้ไปพร้อมกัน ระบบใช้ค่าที่คุณพิมพ์ กรุณาตรวจอีกครั้ง',true)}
+        if(clash.length)toast('ช่อง '+clash.map(f=>FIELD_TH[f]||f).join(', ')+' ถูก '+(snap.updatedBy||'ผู้ใช้อื่น')+' แก้ไปพร้อมกัน ระบบใช้ค่าที่คุณพิมพ์ กรุณาตรวจอีกครั้ง',true);
+        // ตั้งฐานใหม่เป็นสำเนาล่าสุดจากชีท แล้ววางเฉพาะช่องที่เราแก้ทับ
+        const loc=findItem(id);
+        if(loc){const logs=mergeLogs(snap.log,loc.log,lastReadTime-15000);const files=uploading[id]?loc.files:snap.files;
+          Object.assign(loc,clone(snap),dirty[id]||{});loc.log=logs;loc.files=files;
+          if(loc.signed&&items[id]){delete items[id];archive[id]=loc}else if(!loc.signed&&archive[id]){delete archive[id];items[id]=loc}}
+        base[id]=snap.updatedAt||0;
+      }
       if(attempt<2)return saveNow(id,attempt+1);
       setSaveState(id,'error',cleanMsg(m));
     }else if(m.indexOf('AUTH:')>=0){
@@ -800,7 +837,7 @@ function loadThumb(fileId){
   const id=openId;
   gs('getFile',id,fileId).then(r=>{
     const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-    const blob=new Blob([arr],{type:r.mime||'image/jpeg'});fileCache[fileId]=blob;
+    const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[fileId]=blob;
     thumbCache[fileId]=URL.createObjectURL(blob);
     $$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.outerHTML=`<img src="${thumbCache[fileId]}" alt="">`});
   }).catch(e=>{$$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.textContent='โหลดไม่ได้'})}).then(()=>{delete thumbLoading[fileId]});
@@ -809,7 +846,7 @@ async function imagesForPrint(it){
   const imgs=(it.files||[]).filter(isImg);
   const out=[];
   for(const f of imgs){
-    if(!thumbCache[f.id]){try{const r=await gs('getFile',it.id,f.id);const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const blob=new Blob([arr],{type:r.mime||'image/jpeg'});fileCache[f.id]=blob;thumbCache[f.id]=URL.createObjectURL(blob)}catch(e){continue}}
+    if(!thumbCache[f.id]){try{const r=await gs('getFile',it.id,f.id);const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[f.id]=blob;thumbCache[f.id]=URL.createObjectURL(blob)}catch(e){continue}}
     out.push({name:f.name,src:thumbCache[f.id],by:f.by,ts:f.ts});
   }
   return out;
@@ -833,27 +870,36 @@ function shrinkImage(file){
 async function uploadFileUI(id,file){
   const it=findItem(id);if(!it||!file||!canEditItem(it))return;
   if(uploading[id]){toast('รอไฟล์ก่อนหน้าอัปโหลดให้เสร็จก่อน');return}
+  const gen=wsGen;
   if(/^image\//i.test(file.type)&&file.size>0&&!/^image\/(jpeg|png|webp|gif|heic|heif)$/i.test(file.type)){toast('รองรับเฉพาะ JPG / PNG / WEBP / HEIC');return}
   file=await shrinkImage(file);
+  if(gen!==wsGen||!findItem(id))return;
   if(file.size>15*1024*1024){toast('ไฟล์ใหญ่เกิน 15 MB');return}
   uploading[id]={name:file.name+' ('+Math.round(file.size/1024)+' KB)',img:/^image\//i.test(file.type)};renderDrawer();
   const rd=new FileReader();
   rd.onload=()=>{
     const b64=String(rd.result).split(',')[1];
+    if(gen!==wsGen){delete uploading[id];return}
     gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว')}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawer()});
   };
   rd.onerror=()=>{delete uploading[id];toast('อ่านไฟล์ไม่ได้');renderDrawer()};
   rd.readAsDataURL(file);
 }
 const fileCache={};
+const INLINE_MIME=/^(image\/(jpeg|png|webp|gif|heic|heif)|application\/pdf)$/i;
+function safeMime(m){m=String(m||'').toLowerCase().trim();return INLINE_MIME.test(m)?m:'application/octet-stream'}
 function openFileUI(id,fileId){
   const it=findItem(id);const f=(it&&it.files||[]).find(x=>x.id===fileId);if(!f)return;
-  const show=(blob)=>{const u=URL.createObjectURL(blob);const w=window.open(u,'_blank');if(!w){const a=document.createElement('a');a.href=u;a.download=f.name;document.body.appendChild(a);a.click();a.remove()}setTimeout(()=>URL.revokeObjectURL(u),60000)};
+  // เปิดในแท็บใหม่ได้เฉพาะรูปและ PDF และตัดการเข้าถึงหน้าแอป ไฟล์ชนิดอื่นดาวน์โหลดเท่านั้น
+  const show=(blob)=>{const u=URL.createObjectURL(blob);let w=null;
+    if(INLINE_MIME.test(blob.type)){w=window.open(u,'_blank');if(w){try{w.opener=null}catch(x){}}}
+    if(!w){const a=document.createElement('a');a.href=u;a.download=f.name;a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
+    setTimeout(()=>URL.revokeObjectURL(u),60000)};
   if(fileCache[fileId])return show(fileCache[fileId]);
   toast('กำลังดึงไฟล์ '+f.name+'…',true);
   gs('getFile',id,fileId).then(r=>{
     const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-    const blob=new Blob([arr],{type:r.mime||'application/octet-stream'});fileCache[fileId]=blob;show(blob);
+    const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[fileId]=blob;show(blob);
   }).catch(e=>toast('เปิดไฟล์ไม่สำเร็จ: '+cleanMsg(errMsg(e)),true));
 }
 function deleteFileUI(id,fileId){
@@ -983,7 +1029,7 @@ function renderExecStrip(){
   el.classList.remove('hidden');
 }
 function showExecStatsModal(){
-  if(!archiveLoadedAt)loadArchive(false).then(()=>{if($('#execStatsBody'))showExecStatsModal()});
+  if(!archiveLoadedAt)loadArchive(false).then(()=>{if(archiveLoadedAt&&$('#execStatsBody'))showExecStatsModal()});
   const all=Object.values(items).concat(Object.values(archive));
   const keys=new Map();
   keys.set('in','ภายในแผนก');
@@ -1267,7 +1313,7 @@ async function createItem(){
     const r=await gs('saveItem',doc);
     delete doc.autoNo;delete doc.base;
     doc.no=r.no;doc.updatedAt=r.updatedAt;doc.updatedBy=r.updatedBy;doc.files=[];doc.log=[];
-    items[id]=doc;base[id]=r.updatedAt;
+    items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;
     closeModal();filters.tile='';render();
     toast('สร้างใบงาน '+doc.no+' แล้ว');
     addLogEntry(id,'รับใบงาน',doc.status);
@@ -1353,6 +1399,7 @@ $('#wsSel').addEventListener('change',e=>{
   if(hasUnsaved()){toast('รอบันทึกให้เสร็จก่อนสลับพื้นที่งาน',true);e.target.value=ws;return}
   ws=WORKSPACES[e.target.value]?e.target.value:'civil';
   try{localStorage.setItem('wo-workspace',ws)}catch(x){}
+  wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
   items={};archive={};archiveLoadedAt=0;openId=null;page='active';filters=defaultFilters();mode='connecting';
   applyWs();render();refresh(false);
 });
