@@ -397,7 +397,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
       <button data-view="table" class="on">ตาราง</button>
       <button data-view="board">บอร์ด</button>
     </div>
-    <div class="field grow"><input id="q" type="search" placeholder="ค้นหา เลขที่ / หัวข้อ / สถานที่ / ผู้ขอ / ผู้รับผิดชอบ"></div>
+    <div class="field grow"><input id="q" type="search" placeholder="ค้นหา เลขที่ใบงาน / เลขที่ PR-PO / หัวข้อ / สถานที่ / ผู้ขอ"></div>
     <div class="field"><select id="fMonth"><option value="">ทุกเดือนที่รับเรื่อง</option></select></div>
     <div class="field" style="min-width:230px"><input id="fDept" data-combo="depts" placeholder="แผนก: พิมพ์รหัสหรือชื่อเพื่อค้นหา" autocomplete="off"></div>
     <div class="field" style="min-width:210px"><input id="fExec" data-combo="execs" placeholder="ผู้ดำเนินการ: พิมพ์เพื่อค้นหา" autocomplete="off"></div>
@@ -878,7 +878,15 @@ function visibleItems(){
   else if(st==='soon')arr=arr.filter(isSoon);
   else if(st==='progress')arr=arr.filter(it=>it.status==='progress');
   else if(st!=='all')arr=arr.filter(it=>it.status===st);
-  if(q)arr=arr.filter(it=>[it.no,it.title,it.location,it.requester,it.dept,it.detail,it.assignee,it.contractor,it.poRef].some(v=>String(v||'').toLowerCase().includes(q)));
+  if(q){
+    // เทียบแบบไม่สนเว้นวรรค ขีด ทับ จุด เพื่อให้ PR-2569-0123 = PR2569/0123 = pr 2569 0123
+    const loose=x=>String(x||'').toLowerCase().replace(/[\s\-\/\.\_]+/g,'');
+    const lq=loose(q);
+    arr=arr.filter(it=>{
+      const fields=[it.no,it.title,it.location,it.requester,it.dept,it.detail,it.assignee,it.contractor,it.poRef].concat((it.log||[]).map(l=>l.text));
+      return fields.some(v=>{const t=String(v||'').toLowerCase();return t.includes(q)||(lq&&loose(t).includes(lq))});
+    });
+  }
   const pr={p1:0,p2:1,p3:2};
   arr.sort((a,b)=>{
     switch(filters.sort){
