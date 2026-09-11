@@ -886,7 +886,8 @@ function visibleItems(){
       case 'priority':return (pr[a.priority]??2)-(pr[b.priority]??2)||cmpDue(a,b);
       case 'updated':return (b.updatedAt||0)-(a.updatedAt||0);
       case 'signed':return String(b.signedAt||'').localeCompare(String(a.signedAt||''))||cmpNo(b.no,a.no);
-      case 'received':return String(b.received||'').localeCompare(String(a.received||''));
+      case 'received':return String(b.received||'').localeCompare(String(a.received||''))||cmpNo(b.no,a.no);
+      case 'receivedAsc':{const x=a.received||'9999',y=b.received||'9999';return x<y?-1:x>y?1:cmpNo(a.no,b.no)}
       case 'dept':return String(a.dept||'').localeCompare(String(b.dept||''),'th')||String(b.signedAt||'').localeCompare(String(a.signedAt||''));
       default:return cmpNo(b.no,a.no);
     }
@@ -934,7 +935,7 @@ function renderFilters(){
   $('#viewSeg').classList.toggle('hidden',arch);
   $('#fStatusWrap').classList.toggle('hidden',arch);
   $$('#pageSeg button').forEach(b=>b.classList.toggle('on',b.dataset.page===page));
-  const sortOpts=arch?[['signed','เซ็นรับล่าสุดก่อน'],['received','วันรับเรื่องล่าสุดก่อน'],['dept','เรียงตามแผนก'],['no','เรียงตามเลขที่']]:[['due','เรียงตามกำหนดเสร็จ'],['priority','เรียงตามความสำคัญ'],['updated','แก้ไขล่าสุดก่อน'],['no','เรียงตามเลขที่']];
+  const sortOpts=arch?[['signed','เซ็นรับล่าสุดก่อน'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['dept','เรียงตามแผนก'],['no','เรียงตามเลขที่']]:[['due','เรียงตามกำหนดเสร็จ'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['priority','เรียงตามความสำคัญ'],['updated','แก้ไขล่าสุดก่อน'],['no','เรียงตามเลขที่']];
   if(!sortOpts.some(o=>o[0]===filters.sort))filters.sort=sortOpts[0][0];
   const sh=sortOpts.map(o=>`<option value="${o[0]}" ${o[0]===filters.sort?'selected':''}>${o[1]}</option>`).join('');
   if($('#fSort').innerHTML!==sh)$('#fSort').innerHTML=sh;
