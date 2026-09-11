@@ -498,6 +498,8 @@ function execPred(){
   const q=t.toLowerCase();return it=>execOf(it).toLowerCase().includes(q);
 }
 function pool(){return page==='archive'?archive:items}
+// ตัวกรองช่วงเวลา: หน้าคลังนับตามวันเซ็นรับ หน้างานปัจจุบันนับตามวันรับเรื่อง
+function periodKey(){return page==='archive'?'signedAt':'received'}
 function findItem(id){return items[id]||archive[id]||null}
 function canEdit(){return !!session&&(session.user.role==='admin'||session.user.role==='staff')}
 function isAdmin(){return !!session&&session.user.role==='admin'}
@@ -955,7 +957,7 @@ function visibleItems(){
   let arr=Object.values(pool()).filter(it=>page==='archive'?!!it.signed:!it.signed);
   if(filters.dept){const dq=filters.dept.trim().toLowerCase();arr=arr.filter(it=>String(it.dept||'').toLowerCase().includes(dq))}
   const ep=execPred();if(ep)arr=arr.filter(ep);
-  if(filters.month)arr=arr.filter(it=>String(it.received||'').startsWith(filters.month)); // "YYYY" = ทั้งปี, "YYYY-MM" = รายเดือน
+  if(filters.month){const pk=periodKey();arr=arr.filter(it=>String(it[pk]||'').startsWith(filters.month))} // "YYYY" = ทั้งปี, "YYYY-MM" = รายเดือน
   const st=page==='archive'?'all':(filters.tile||filters.status);
   if(st==='open')arr=arr.filter(it=>it.status!=='cancel');
   else if(st==='pending')arr=arr.filter(isPending);
@@ -1010,21 +1012,21 @@ const TH_MONTH=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','�
 // "2026" → "ปี 2569", "2026-09" → "ก.ย. 2569"
 function periodText(p){p=String(p||'');if(/^\d{4}$/.test(p))return 'ปี '+(+p+543);if(/^\d{4}-\d{2}$/.test(p))return TH_MONTH[+p.slice(5)-1]+' '+(+p.slice(0,4)+543);return ''}
 function renderArchiveSummary(){
-  // ช่อง "เซ็นรับ" และ "แผนกที่ขอมากที่สุด" เปลี่ยนตามช่วงที่เลือกในตัวกรอง (ทั้งปีหรือรายเดือน) · ช่องทั้งหมดและระยะเวลาเฉลี่ยนับทุกช่วง
+  // ช่อง "เซ็นรับ" และ "แผนกที่ขอมากที่สุด" เปลี่ยนตามช่วงวันเซ็นรับที่เลือกในตัวกรอง (ทั้งปีหรือรายเดือน) · ช่องทั้งหมดและระยะเวลาเฉลี่ยนับทุกช่วง
   const p=filters.month,pt=periodText(p);
   const all=Object.values(archive).filter(it=>it.signed);
-  const inRec=p?all.filter(it=>String(it.received||'').startsWith(p)):all;
+  const inPeriod=p?all.filter(it=>String(it.signedAt||'').startsWith(p)):all;
   const signedIn=pre=>all.filter(it=>String(it.signedAt||'').startsWith(pre)).length;
   const sPre=p||todayISO().slice(0,7),sYear=sPre.slice(0,4);
   const ds=all.map(it=>daysBetween(it.received,it.signedAt)).filter(d=>d!=null&&d>=0);
   const avg=ds.length?Math.round(ds.reduce((a,b)=>a+b,0)/ds.length):null;
-  const byDept={};inRec.forEach(it=>{const d=it.dept||'ไม่ระบุ';byDept[d]=(byDept[d]||0)+1});
+  const byDept={};inPeriod.forEach(it=>{const d=it.dept||'ไม่ระบุ';byDept[d]=(byDept[d]||0)+1});
   const top=Object.entries(byDept).sort((a,b)=>b[1]-a[1])[0];
   const tiles=[
     {label:'งานที่เซ็นรับแล้วทั้งหมด',v:all.length,n:'ใบงาน'},
     {label:p?'เซ็นรับ '+pt:'เซ็นรับเดือนนี้',v:signedIn(sPre),n:sPre.length===4?'ใบงาน':'ทั้งปี '+(+sYear+543)+' เซ็นรับ '+signedIn(sYear)+' ใบงาน'},
     {label:'ระยะเวลาเฉลี่ย รับเรื่อง → เซ็นรับ',v:avg==null?'—':avg,n:avg==null?'ยังไม่มีข้อมูล':'วัน'},
-    {label:'แผนกที่ขอมากที่สุด'+(p?' · รับเรื่อง '+pt:''),v:top?top[1]:'—',n:top?top[0]:'ยังไม่มีข้อมูล',ds:'received'},
+    {label:'แผนกที่ขอมากที่สุด'+(p?' · เซ็นรับ '+pt:''),v:top?top[1]:'—',n:top?top[0]:'ยังไม่มีข้อมูล',ds:'signed'},
   ];
   $('#summary').innerHTML=tiles.map(t=>t.ds
     ?`<button class="tile" data-deptstat="${t.ds}" title="กดดูสัดส่วนรายแผนก"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span><span class="n">${esc(t.n)}</span><span class="go">ดูแผนภูมิรายแผนก ›</span></button>`
@@ -1032,7 +1034,7 @@ function renderArchiveSummary(){
 }
 /* ---------- สัดส่วนงานรายแผนก (แผนภูมิวงกลม + 10 อันดับ) ---------- */
 const PIE_COLORS=['#1F5AA6','#D9822B','#2E8B6E','#B8434E','#7B5EA7'],PIE_OTHER='#8C97A5';
-const deptStat={basis:'received',y:'',m:''}; // y ว่าง = ทุกปี
+const deptStat={basis:'signed',y:'',m:''}; // y ว่าง = ทุกปี
 function pieSvg(parts,total){
   const C=110,R=100;let a=-Math.PI/2;const segs=[],labels=[];
   parts.forEach(p=>{
@@ -1049,7 +1051,7 @@ function pieSvg(parts,total){
 function openDeptStats(basis){
   // เปิดที่ช่วงเดียวกับตัวกรอง ไม่ได้เลือกช่วง = ทุกปี (ตรงกับตัวเลขในช่อง)
   const p=filters.month;
-  deptStat.basis=basis||'received';
+  deptStat.basis=basis||'signed';
   if(/^\d{4}-\d{2}$/.test(p)){deptStat.y=p.slice(0,4);deptStat.m=p.slice(5,7)}
   else if(/^\d{4}$/.test(p)){deptStat.y=p;deptStat.m=''}
   else{deptStat.y='';deptStat.m=''}
@@ -1074,7 +1076,7 @@ function showDeptStatsModal(){
   $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box" style="width:min(880px,100%)">
     <h2>สัดส่วนงานรายแผนก · ${esc(WORKSPACES[ws].name)}</h2>
     <div class="toolbar" style="margin-bottom:8px">
-      <div class="field"><select id="dsBasis">${[['received','คลังงาน · นับตามวันรับเรื่อง'],['signed','คลังงาน · นับตามวันเซ็นรับ'],['all','ใบงานทั้งหมด · นับตามวันรับเรื่อง']].map(o=>`<option value="${o[0]}" ${o[0]===b?'selected':''}>${o[1]}</option>`).join('')}</select></div>
+      <div class="field"><select id="dsBasis">${[['signed','คลังงาน · นับตามวันเซ็นรับ'],['received','คลังงาน · นับตามวันรับเรื่อง'],['all','ใบงานทั้งหมด · นับตามวันรับเรื่อง']].map(o=>`<option value="${o[0]}" ${o[0]===b?'selected':''}>${o[1]}</option>`).join('')}</select></div>
       <div class="field"><select id="dsYear"><option value="" ${deptStat.y?'':'selected'}>ทุกปี</option>${years.map(y=>`<option value="${y}" ${y===deptStat.y?'selected':''}>ปี ${+y+543}</option>`).join('')}</select></div>
       <div class="field"><select id="dsMonth" ${deptStat.y?'':'disabled'}><option value="">ทั้งปี</option>${TH_MONTH.map((n,i)=>{const v=String(i+1).padStart(2,'0');return `<option value="${v}" ${v===deptStat.m?'selected':''}>${n}</option>`}).join('')}</select></div>
     </div>
@@ -1102,11 +1104,12 @@ function renderFilters(){
   if($('#fDept').value!==filters.dept&&document.activeElement!==$('#fDept'))$('#fDept').value=filters.dept;
   if($('#q').value!==filters.q&&document.activeElement!==$('#q'))$('#q').value=filters.q;
   const fm=$('#fMonth');
-  // ตัวกรองวันรับเรื่อง: เลือกได้ทั้งทั้งปี ("YYYY") และรายเดือน ("YYYY-MM") ช่วงที่เลือกค้างไว้แม้ไม่มีใบในช่วงนั้น
-  const months=Array.from(new Set(Object.values(pool()).map(it=>String(it.received||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m))));
+  // ตัวกรองช่วงเวลา: เลือกได้ทั้งทั้งปี ("YYYY") และรายเดือน ("YYYY-MM") ช่วงที่เลือกค้างไว้แม้ไม่มีใบในช่วงนั้น
+  const pk=periodKey(),pw=pk==='signedAt'?'เซ็นรับ':'รับเรื่อง';
+  const months=Array.from(new Set(Object.values(pool()).map(it=>String(it[pk]||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m))));
   if(/^\d{4}-\d{2}$/.test(filters.month)&&!months.includes(filters.month))months.push(filters.month);
   const years=Array.from(new Set(months.map(m=>m.slice(0,4)).concat(/^\d{4}$/.test(filters.month)?[filters.month]:[]))).sort().reverse();
-  const mh='<option value="">ทุกช่วงเวลาที่รับเรื่อง</option>'+years.map(y=>`<optgroup label="ปี ${+y+543}"><option value="${y}">รับเรื่องทั้งปี ${+y+543}</option>${months.filter(m=>m.startsWith(y)).sort().reverse().map(m=>`<option value="${m}">รับเรื่อง ${TH_MONTH[+m.slice(5)-1]} ${+y+543}</option>`).join('')}</optgroup>`).join('');
+  const mh=`<option value="">ทุกช่วงเวลาที่${pw}</option>`+years.map(y=>`<optgroup label="ปี ${+y+543}"><option value="${y}">${pw}ทั้งปี ${+y+543}</option>${months.filter(m=>m.startsWith(y)).sort().reverse().map(m=>`<option value="${m}">${pw} ${TH_MONTH[+m.slice(5)-1]} ${+y+543}</option>`).join('')}</optgroup>`).join('');
   if(fm.innerHTML!==mh)fm.innerHTML=mh;
   fm.value=filters.month;
   const g=$('#fStatusGroup');
@@ -1521,7 +1524,7 @@ $('#wsSel').addEventListener('change',e=>{
   items={};archive={};archiveLoadedAt=0;openId=null;page='active';filters=defaultFilters();mode='connecting';
   applyWs();render();refresh(false);
 });
-$('#pageSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.page===page)return;page=b.dataset.page;filters.tile='';filters.status='open';filters.sort=page==='archive'?'signed':'due';render();if(page==='archive')loadArchive(false)});
+$('#pageSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.page===page)return;page=b.dataset.page;filters.tile='';filters.status='open';filters.month='';filters.sort=page==='archive'?'signed':'due';render();if(page==='archive')loadArchive(false)});
 $('#btnNew').addEventListener('click',()=>{if(canEdit())showNewModal()});
 $('#btnUser').addEventListener('click',()=>showUserModal(false));
 $('#btnSettings').addEventListener('click',()=>{if(isAdmin())showSettingsModal()});
