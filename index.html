@@ -311,6 +311,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .photo figcaption{font-size:11px;color:var(--muted);padding:2px 6px;display:flex;justify-content:space-between;align-items:center;gap:4px}
 .photo .del{opacity:1}
 .photo.pending{padding:8px;font-size:12px;color:var(--muted);justify-content:center}
+.execstrip{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:4px;padding:8px 12px;margin:-4px 0 12px;font-size:13.5px}
+.execstrip>b{color:var(--accent)}
+.execstrip span b{font-size:15px}
+.execstrip .warn b{color:var(--s-red-fg)}
 .linklist{font-size:13px;margin-top:6px;color:var(--muted);word-break:break-all}
 .linklist a{color:var(--accent)}
 .log .by{font-weight:600;color:var(--text)}
@@ -388,6 +392,8 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     <div class="field grow"><input id="q" type="search" placeholder="ค้นหา เลขที่ / หัวข้อ / สถานที่ / ผู้ขอ / ผู้รับผิดชอบ"></div>
     <div class="field"><select id="fMonth"><option value="">ทุกเดือนที่รับเรื่อง</option></select></div>
     <div class="field" style="min-width:230px"><input id="fDept" data-combo="depts" placeholder="แผนก: พิมพ์รหัสหรือชื่อเพื่อค้นหา" autocomplete="off"></div>
+    <div class="field"><select id="fExec"><option value="">ทุกผู้ดำเนินการ</option></select></div>
+    <button class="btn sm" id="btnExecStats" title="สรุปจำนวนงานของแต่ละผู้ดำเนินการ">📊 ผู้ดำเนินการ</button>
     <div class="field" id="fStatusWrap"><select id="fStatus">
       <option value="open">งานที่ยังเปิดอยู่</option>
       <option value="pending">เสร็จแล้ว รอเซ็นรับ</option>
@@ -428,7 +434,7 @@ const FALLBACK={
   STATUSES:[{id:'received',name:'รับเรื่อง',tone:'grey',pct:0},{id:'survey',name:'สำรวจ',tone:'blue',pct:20},{id:'design',name:'เขียนแบบ / ประเมินราคา',tone:'blue',pct:30},{id:'pr',name:'เปิด PR แล้ว',tone:'amber',pct:40},{id:'po',name:'มี PO แล้ว',tone:'amber',pct:50},{id:'progress',name:'กำลังดำเนินการ',tone:'teal',pct:50},{id:'done',name:'เสร็จแล้ว',tone:'green',pct:100},{id:'cancel',name:'ยกเลิก',tone:'mute',pct:0}],
   PRIORITIES:[{id:'p1',name:'ด่วนมาก'},{id:'p2',name:'ด่วน'},{id:'p3',name:'ปกติ'}],
   ROLE_NAME:{admin:'ผู้ดูแลระบบ',staff:'เจ้าหน้าที่',viewer:'ดูอย่างเดียว'},
-  DEFAULT_SETTINGS:{depts:[],types:['ก่อสร้างใหม่','ต่อเติม / ปรับปรุง','ซ่อมแซม','ตรวจสอบ / ประเมิน','เขียนแบบ / ถอดปริมาณ','อื่น ๆ'],sites:['โรงงาน 1','โรงงาน 2','สำนักงาน','คลังสินค้า']},
+  DEFAULT_SETTINGS:{depts:[],contractors:[],types:['ก่อสร้างใหม่','ต่อเติม / ปรับปรุง','ซ่อมแซม','ตรวจสอบ / ประเมิน','เขียนแบบ / ถอดปริมาณ','อื่น ๆ'],sites:['โรงงาน 1','โรงงาน 2','สำนักงาน','คลังสินค้า']},
   WORKSPACES:{civil:{name:'งานแผนกโยธา',prefix:'WO'},special:{name:'งานแผนกเฉพาะกิจ',prefix:'SP'}}
 };
 const C={"STATUSES":[{"id":"received","name":"รับเรื่อง","tone":"grey","pct":0},{"id":"survey","name":"สำรวจ","tone":"blue","pct":20},{"id":"design","name":"เขียนแบบ / ประเมินราคา","tone":"blue","pct":30},{"id":"pr","name":"เปิด PR แล้ว","tone":"amber","pct":40},{"id":"po","name":"มี PO แล้ว","tone":"amber","pct":50},{"id":"progress","name":"กำลังดำเนินการ","tone":"teal","pct":50},{"id":"done","name":"เสร็จแล้ว","tone":"green","pct":100},{"id":"cancel","name":"ยกเลิก","tone":"mute","pct":0}],"PRIORITIES":[{"id":"p1","name":"ด่วนมาก"},{"id":"p2","name":"ด่วน"},{"id":"p3","name":"ปกติ"}],"ROLE_NAME":{"admin":"ผู้ดูแลระบบ","staff":"เจ้าหน้าที่","viewer":"ดูอย่างเดียว"},"DEFAULT_SETTINGS":{"depts":[],"types":["ก่อสร้างใหม่","ต่อเติม / ปรับปรุง","ซ่อมแซม","ตรวจสอบ / ประเมิน","เขียนแบบ / ถอดปริมาณ","อื่น ๆ"],"sites":["โรงงาน 1","โรงงาน 2","สำนักงาน","คลังสินค้า"]},"WORKSPACES":{"civil":{"name":"งานแผนกโยธา","prefix":"WO"},"special":{"name":"งานแผนกเฉพาะกิจ","prefix":"SP"}}}||FALLBACK;
@@ -456,7 +462,9 @@ const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, 
 let refreshing=false, refreshStartedAt=0, refreshPromise=null;
 const serverSnap={};
 
-function defaultFilters(){return {q:'',dept:'',month:'',status:'open',sort:'due',tile:''}}
+function defaultFilters(){return {q:'',dept:'',month:'',exec:'',status:'open',sort:'due',tile:''}}
+function execOf(it){return it.assignee==='ผู้รับเหมา'?('ผู้รับเหมา: '+(it.contractor||'ไม่ระบุชื่อ')):(it.assignee?'ภายในแผนก':'')}
+function execKey(it){return it.assignee==='ผู้รับเหมา'?'c:'+(it.contractor||''):(it.assignee?'in':'')}
 function pool(){return page==='archive'?archive:items}
 function findItem(id){return items[id]||archive[id]||null}
 function canEdit(){return !!session&&(session.user.role==='admin'||session.user.role==='staff')}
@@ -618,7 +626,7 @@ async function loadArchive(force){
   if(!session||archiveLoading)return;
   if(!force&&Date.now()-archiveLoadedAt<60000)return;
   archiveLoading=true;refreshStartedAt=Date.now();
-  try{const r=await gs('getAll',{archive:true});applyServer(r.items,'archive');archiveLoadedAt=Date.now();if(page==='archive'){mode='sheet';render()}}
+  try{const r=await gs('getAll',{archive:true});applyServer(r.items,'archive');archiveLoadedAt=Date.now();if(page==='archive'){mode='sheet';render()}else{renderFilters()}}
   catch(e){console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
   finally{archiveLoading=false}
 }
@@ -845,6 +853,7 @@ function visibleItems(){
   const q=filters.q.trim().toLowerCase();
   let arr=Object.values(pool()).filter(it=>page==='archive'?!!it.signed:!it.signed);
   if(filters.dept){const dq=filters.dept.trim().toLowerCase();arr=arr.filter(it=>String(it.dept||'').toLowerCase().includes(dq))}
+  if(filters.exec){arr=arr.filter(it=>filters.exec==='in'?it.assignee==='ภายในแผนก':filters.exec==='c:'?it.assignee==='ผู้รับเหมา':execKey(it)===filters.exec)}
   if(filters.month)arr=arr.filter(it=>String(it.received||'').slice(0,7)===filters.month);
   const st=page==='archive'?'all':(filters.tile||filters.status);
   if(st==='open')arr=arr.filter(it=>it.status!=='cancel');
@@ -924,7 +933,48 @@ function renderFilters(){
   fm.value=filters.month;
   const g=$('#fStatusGroup');
   if(!g.children.length)g.innerHTML=STATUSES.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const fe=$('#fExec');
+  const names=Array.from(new Set((settings.contractors||[]).concat(Object.values(items).concat(Object.values(archive)).filter(it=>it.assignee==='ผู้รับเหมา'&&it.contractor).map(it=>it.contractor))));
+  const eh='<option value="">ทุกผู้ดำเนินการ</option><option value="in">ภายในแผนก</option><option value="c:">ผู้รับเหมา (ทุกเจ้า)</option>'+names.map(n=>`<option value="c:${esc(n)}">ผู้รับเหมา: ${esc(n)}</option>`).join('');
+  if(fe.innerHTML!==eh)fe.innerHTML=eh;
+  fe.value=filters.exec;if(fe.value!==filters.exec){filters.exec='';fe.value=''}
+  renderExecStrip();
   $('#fStatus').value=filters.tile||filters.status;
+}
+function execStats(pred){
+  const all=Object.values(items).concat(Object.values(archive)).filter(pred);
+  const m=todayISO().slice(0,7);
+  return {total:all.length,month:all.filter(it=>String(it.received||'').startsWith(m)).length,open:all.filter(it=>!it.signed&&!CLOSED.has(it.status)).length,pending:all.filter(isPending).length,signed:all.filter(it=>it.signed).length,over:all.filter(isOverdue).length};
+}
+function renderExecStrip(){
+  let el=$('#execStrip');
+  if(!el){el=document.createElement('div');el.id='execStrip';el.className='execstrip hidden';$('.toolbar').insertAdjacentElement('afterend',el)}
+  if(!filters.exec){el.classList.add('hidden');return}
+  if(!archiveLoadedAt)loadArchive(false);
+  const pred=it=>filters.exec==='in'?it.assignee==='ภายในแผนก':filters.exec==='c:'?it.assignee==='ผู้รับเหมา':execKey(it)===filters.exec;
+  const st=execStats(pred);
+  const label=filters.exec==='in'?'ภายในแผนก':filters.exec==='c:'?'ผู้รับเหมาทุกเจ้า':'ผู้รับเหมา '+filters.exec.slice(2);
+  el.innerHTML=`<b>${esc(label)}</b><span>ทั้งหมด <b>${st.total}</b></span><span>รับเรื่องเดือนนี้ <b>${st.month}</b></span><span>กำลังทำ <b>${st.open}</b></span><span class="${st.over?'warn':''}">เกินกำหนด <b>${st.over}</b></span><span>เสร็จ รอเซ็น <b>${st.pending}</b></span><span>เซ็นรับแล้ว <b>${st.signed}</b></span>${archiveLoadedAt?'':'<span class="readonly-note">(กำลังโหลดคลังงาน…)</span>'}`;
+  el.classList.remove('hidden');
+}
+function showExecStatsModal(){
+  if(!archiveLoadedAt)loadArchive(false).then(()=>{if($('#execStatsBody'))showExecStatsModal()});
+  const all=Object.values(items).concat(Object.values(archive));
+  const keys=new Map();
+  keys.set('in','ภายในแผนก');
+  (settings.contractors||[]).forEach(n=>keys.set('c:'+n,'ผู้รับเหมา: '+n));
+  all.forEach(it=>{const k=execKey(it);if(k&&!keys.has(k))keys.set(k,k==='in'?'ภายในแผนก':'ผู้รับเหมา: '+(it.contractor||'ไม่ระบุชื่อ'))});
+  const rows=Array.from(keys.entries()).map(([k,name])=>{const st=execStats(it=>execKey(it)===k);return {k,name,st}}).filter(r=>r.st.total||r.k==='in');
+  const none=execStats(it=>!it.assignee);
+  $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box" style="width:min(760px,100%)">
+    <h2>สรุปงานตามผู้ดำเนินการ · ${esc(WORKSPACES[ws].name)}</h2>
+    <div class="readonly-note" style="margin-bottom:8px">นับจากใบงานทั้งหมด (งานปัจจุบัน + คลังที่เซ็นแล้ว) · "รับเรื่องเดือนนี้" = วันรับใบงานอยู่ในเดือนปัจจุบัน ${archiveLoadedAt?'':'· กำลังโหลดคลังงาน…'}</div>
+    <div style="overflow-x:auto"><table class="utable" id="execStatsBody"><thead><tr><th>ผู้ดำเนินการ</th><th>ทั้งหมด</th><th>รับเรื่องเดือนนี้</th><th>กำลังทำ</th><th>เกินกำหนด</th><th>เสร็จ รอเซ็น</th><th>เซ็นรับแล้ว</th><th></th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.st.total}</td><td>${r.st.month}</td><td>${r.st.open}</td><td class="${r.st.over?'pri p1':''}">${r.st.over}</td><td>${r.st.pending}</td><td>${r.st.signed}</td><td><button class="btn sm" data-execfilter="${esc(r.k)}">ดูรายการ</button></td></tr>`).join('')}
+      ${none.total?`<tr><td class="readonly-note">ยังไม่ระบุผู้ดำเนินการ</td><td>${none.total}</td><td>${none.month}</td><td>${none.open}</td><td>${none.over}</td><td>${none.pending}</td><td>${none.signed}</td><td></td></tr>`:''}
+    </tbody></table></div>
+    <div class="actions"><button class="btn" id="mCancel">ปิด</button></div>
+  </div></div>`;
 }
 function chipStatus(id,it){
   if(it&&it.status==='done'){return it.signed?'<span class="chip green">เซ็นรับแล้ว</span>':'<span class="chip amber">เสร็จแล้ว · รอเซ็นรับ</span>'}
@@ -943,7 +993,7 @@ function renderMain(){
     const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);const p=priOf(it.priority);
     return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}${it.example?' <span class="chip outline" style="font-size:10.5px;padding:0 6px">ตัวอย่าง</span>':''}${it.files&&it.files.length?' <span title="มีไฟล์แนบ '+it.files.length+' ไฟล์">📎</span>':''}</td>
-      <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||it.type||'')}${it.assignee?' · '+esc(it.assignee):''}</div></td>
+      <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||it.type||'')}${it.assignee?' · '+esc(execOf(it)):''}</div></td>
       <td class="dept">${esc(it.dept||'—')}</td>
       <td>${chipStatus(it.status,it)}</td>
       <td><span class="pri ${p.id}">${esc(p.name)}</span></td>
@@ -1051,8 +1101,8 @@ function renderDrawer(){
           <div class="f"><label>ความสำคัญ</label><select data-f="priority" ${dis}>${opt(PRIORITIES,it.priority||'p3','name')}</select></div>
           <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input data-f="requester" value="${esc(it.requester||'')}" placeholder="ชื่อ, ตำแหน่ง, เบอร์" ${dis}></div>
           <div class="f wide"><label>สถานที่ / หน้างาน</label><input data-f="location" list="siteList" value="${esc(it.location||'')}" placeholder="เช่น โรงงาน 2 · บ่อแป้ง" ${dis}><datalist id="siteList">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
-          <div class="f"><label>ผู้รับผิดชอบ</label><input data-f="assignee" value="${esc(it.assignee||'')}" placeholder="ชื่อช่าง / ผู้ดูแลงาน" ${dis}></div>
-          <div class="f"><label>ผู้รับเหมา</label><input data-f="contractor" value="${esc(it.contractor||'')}" placeholder="ชื่อผู้รับเหมา (ถ้ามี)" ${dis}></div>
+          <div class="f"><label>ผู้ดำเนินการ</label><select data-f="assignee" ${dis}><option value="">— เลือก —</option><option value="ภายในแผนก" ${it.assignee==='ภายในแผนก'?'selected':''}>ภายในแผนก</option><option value="ผู้รับเหมา" ${it.assignee==='ผู้รับเหมา'?'selected':''}>ผู้รับเหมา</option></select></div>
+          <div class="f ${it.assignee==='ผู้รับเหมา'?'':'hidden'}"><label>ชื่อผู้รับเหมา</label><input data-f="contractor" data-combo="contractors" value="${esc(it.contractor||'')}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off" ${dis}></div>
           <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input data-f="budget" value="${esc(it.budget||'')}" placeholder="เช่น 45,000" inputmode="decimal" ${dis}></div>
           <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input data-f="poRef" value="${esc(it.poRef||'')}" placeholder="เช่น PR-2569-0123" ${dis}></div>
         </div>
@@ -1113,7 +1163,7 @@ async function printItem(it){
     <h1>${esc(it.title||'')}</h1>
     <table class="ptable">
       ${row('แผนกที่ขอ',esc(it.dept))}${row('ประเภทงาน',esc(it.type))}${row('ความสำคัญ',esc(priOf(it.priority).name))}${row('สถานะ',esc(statusOf(it.status).name)+(it.signed?' (เซ็นรับแล้ว '+fmtD(it.signedAt)+(it.signedBy?' โดย '+esc(it.signedBy):'')+')':''))}
-      ${row('ผู้ขอ / ผู้ประสานงาน',esc(it.requester))}${row('สถานที่ / หน้างาน',esc(it.location))}${row('ผู้รับผิดชอบ',esc(it.assignee))}${row('ผู้รับเหมา',esc(it.contractor))}${row('ราคาประเมิน / งบ',esc(it.budget))}${row('เลขที่ PR / PO',esc(it.poRef))}
+      ${row('ผู้ขอ / ผู้ประสานงาน',esc(it.requester))}${row('สถานที่ / หน้างาน',esc(it.location))}${row('ผู้ดำเนินการ',esc(execOf(it)))}${row('ราคาประเมิน / งบ',esc(it.budget))}${row('เลขที่ PR / PO',esc(it.poRef))}
       ${row('วันรับใบงาน',fmtD(it.received))}${row('วันเริ่มงาน',fmtD(it.start))}${row('กำหนดเสร็จ',fmtD(it.due))}${row('วันเสร็จจริง',fmtD(it.finished))}${row('ความคืบหน้า',pctOf(it.status)+'%')}
       ${row('รายละเอียดงาน','<div class="pre">'+esc(it.detail)+'</div>')}
     </table>
@@ -1133,7 +1183,7 @@ async function printItem(it){
 function exportCsv(){
   const arr=visibleItems();
   if(!arr.length){toast('ไม่มีรายการให้ส่งออก');return}
-  const cols=[['เลขที่','no'],['หัวข้องาน','title'],['แผนกที่ขอ','dept'],['ประเภทงาน','type'],['ความสำคัญ',it=>priOf(it.priority).name],['สถานะ',it=>statusOf(it.status).name+(it.signed?' (เซ็นรับแล้ว)':'')],['ผู้ขอ','requester'],['สถานที่','location'],['ผู้รับผิดชอบ','assignee'],['ผู้รับเหมา','contractor'],['ราคาประเมิน/งบ','budget'],['PR/PO','poRef'],['วันรับใบงาน','received'],['วันเริ่มงาน','start'],['กำหนดเสร็จ','due'],['วันเสร็จจริง','finished'],['คืบหน้า %',it=>pctOf(it.status)],['วันเซ็นรับ','signedAt'],['เซ็นรับโดย','signedBy'],['แก้ไขล่าสุดโดย','updatedBy'],['รายละเอียด','detail'],['บันทึกล่าสุด',it=>{const l=(it.log||[]).slice().sort((a,b)=>b.ts-a.ts)[0];return l?fmtDT(l.ts)+' '+l.text:''}]];
+  const cols=[['เลขที่','no'],['หัวข้องาน','title'],['แผนกที่ขอ','dept'],['ประเภทงาน','type'],['ความสำคัญ',it=>priOf(it.priority).name],['สถานะ',it=>statusOf(it.status).name+(it.signed?' (เซ็นรับแล้ว)':'')],['ผู้ขอ','requester'],['สถานที่','location'],['ผู้ดำเนินการ',it=>execOf(it)],['ราคาประเมิน/งบ','budget'],['PR/PO','poRef'],['วันรับใบงาน','received'],['วันเริ่มงาน','start'],['กำหนดเสร็จ','due'],['วันเสร็จจริง','finished'],['คืบหน้า %',it=>pctOf(it.status)],['วันเซ็นรับ','signedAt'],['เซ็นรับโดย','signedBy'],['แก้ไขล่าสุดโดย','updatedBy'],['รายละเอียด','detail'],['บันทึกล่าสุด',it=>{const l=(it.log||[]).slice().sort((a,b)=>b.ts-a.ts)[0];return l?fmtDT(l.ts)+' '+l.text:''}]];
   const cell=v=>{v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const lines=[cols.map(c=>cell(c[0])).join(',')].concat(arr.map(it=>cols.map(c=>cell(typeof c[1]==='function'?c[1](it):it[c[1]])).join(',')));
   const blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
@@ -1155,7 +1205,8 @@ function showNewModal(){
       <div class="f ${sf?'hidden':''}"><label>ประเภทงาน</label><select id="nType"><option value="">— เลือก —</option>${optS(settings.types)}</select></div>
       <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input id="nReq"></div>
       <div class="f"><label>สถานที่ / หน้างาน</label><input id="nLoc" list="siteList2"><datalist id="siteList2">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
-      <div class="f ${sf?'hidden':''}"><label>ผู้รับผิดชอบ</label><input id="nAssignee"></div>
+      <div class="f ${sf?'hidden':''}"><label>ผู้ดำเนินการ</label><select id="nAssignee"><option value="">— เลือก —</option><option value="ภายในแผนก">ภายในแผนก</option><option value="ผู้รับเหมา">ผู้รับเหมา</option></select></div>
+      <div class="f hidden" id="nContractorWrap"><label>ชื่อผู้รับเหมา</label><input id="nContractor" data-combo="contractors" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off"></div>
       <div class="f"><label>สถานะเริ่มต้น</label><select id="nStatus">${STATUSES.filter(s=>!CLOSED.has(s.id)).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
       <div class="f"><label>วันรับใบงาน</label><input type="date" id="nRec" value="${t}"></div>
       <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
@@ -1174,7 +1225,7 @@ async function createItem(){
   const no=$('#nNo').value.trim();
   const id=newId();
   const doc={id,no,autoNo:!no,title,dept:$('#nDept').value.trim(),type:$('#nType').value,priority:$('#nPri').value,status:$('#nStatus').value,
-    requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value.trim(),contractor:'',budget:'',poRef:'',
+    requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value,contractor:$('#nAssignee').value==='ผู้รับเหมา'?$('#nContractor').value.trim():'',budget:'',poRef:'',
     received:$('#nRec').value,start:$('#nStart').value,due:$('#nDue').value,finished:'',progress:pctOf($('#nStatus').value),signed:false,signedAt:'',signedBy:'',
     detail:$('#nDetail').value,createdAt:Date.now(),updatedAt:Date.now(),base:0};
   btn.disabled=true;btn.textContent='กำลังบันทึก…';err.textContent='';
@@ -1220,6 +1271,7 @@ function showSettingsModal(){
       <div class="f wide"><label>รายชื่อแผนก (บรรทัดละ 1 แผนก · รูปแบบ “รหัส ชื่อ”)</label><textarea class="list" id="sDepts">${esc(settings.depts.join('\n'))}</textarea></div>
       <div class="f"><label>ประเภทงาน (บรรทัดละ 1 ประเภท)</label><textarea class="list" id="sTypes" style="min-height:110px">${esc(settings.types.join('\n'))}</textarea></div>
       <div class="f"><label>สถานที่ที่ใช้บ่อย (บรรทัดละ 1 แห่ง)</label><textarea class="list" id="sSites" style="min-height:110px">${esc(settings.sites.join('\n'))}</textarea></div>
+      <div class="f wide"><label>รายชื่อผู้รับเหมา (บรรทัดละ 1 ราย)</label><textarea class="list" id="sContractors" style="min-height:110px">${esc((settings.contractors||[]).join('\n'))}</textarea></div>
     </div>
     <div class="actions"><button class="btn" id="mCancel">ปิด</button><button class="btn primary" id="sSave">บันทึกรายการ</button></div>
     <h2 style="margin-top:22px">ผู้ใช้และสิทธิ์</h2>
@@ -1287,6 +1339,8 @@ $('#q').addEventListener('input',e=>{filters.q=e.target.value;renderMain()});
 $('#fDept').addEventListener('input',e=>{filters.dept=e.target.value;renderMain()});
 $('#fDept').addEventListener('change',e=>{filters.dept=e.target.value;renderMain()});
 $('#fMonth').addEventListener('change',e=>{filters.month=e.target.value;renderMain()});
+$('#fExec').addEventListener('change',e=>{filters.exec=e.target.value;renderExecStrip();renderMain()});
+$('#btnExecStats').addEventListener('click',showExecStatsModal);
 $('#fStatus').addEventListener('change',e=>{filters.status=e.target.value;filters.tile='';render()});
 $('#fSort').addEventListener('change',e=>{filters.sort=e.target.value;renderMain()});
 $('#viewSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;view=b.dataset.view;$$('#viewSeg button').forEach(x=>x.classList.toggle('on',x===b));renderMain()});
@@ -1321,6 +1375,7 @@ drawer.addEventListener('change',e=>{
   const f=t.dataset.f;if(!f||!openId)return;
   if(f==='status'){setStatus(openId,t.value);return}
   if(f==='signed'){signItem(openId,t.checked);return}
+  if(f==='assignee'){patch(openId,{assignee:t.value,contractor:t.value==='ผู้รับเหมา'?(findItem(openId).contractor||''):''});return}
   patch(openId,{[f]:t.value});
 });
 drawer.addEventListener('click',e=>{
@@ -1349,12 +1404,14 @@ drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modal'))closeModal();else if(openId)closeDrawer()}});
 
 $('#modalHost').addEventListener('change',e=>{
+  if(e.target.id==='nAssignee'){$('#nContractorWrap').classList.toggle('hidden',e.target.value!=='ผู้รับเหมา');return}
   const cb=e.target;if(!cb||cb.dataset.uf!=='simpleForm')return;
   const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
 });
 $('#modalHost').addEventListener('click',e=>{
   const t=e.target;
   if(t.id==='mCancel'||t.id==='modal')return closeModal();
+  if(t.dataset.execfilter!==undefined){filters.exec=t.dataset.execfilter;closeModal();page='active';render();return}
   if(t.id==='mSave')return createItem();
   if(t.id==='uLogout'){doLogout();return}
   if(t.id==='pwSave'){
@@ -1394,7 +1451,7 @@ $('#modalHost').addEventListener('click',e=>{
   }
   if(t.id==='sSave'){
     const lines=s=>s.split('\n').map(x=>x.trim()).filter(Boolean);
-    settings.depts=lines($('#sDepts').value);settings.types=lines($('#sTypes').value);settings.sites=lines($('#sSites').value);
+    settings.depts=lines($('#sDepts').value);settings.types=lines($('#sTypes').value);settings.sites=lines($('#sSites').value);settings.contractors=lines($('#sContractors').value);
     if(!settings.depts.length)settings.depts=clone(DEFAULT_SETTINGS.depts);
     t.disabled=true;
     gs('saveSettings',clone(settings)).then(()=>{toast('บันทึกการตั้งค่าแล้ว');t.disabled=false;render()}).catch(e=>{toast('บันทึกตั้งค่าไม่สำเร็จ: '+cleanMsg(errMsg(e)),true);t.disabled=false});
@@ -1404,7 +1461,7 @@ $('#modalHost').addEventListener('click',e=>{
 /* ---------- combo (ช่องเลือกแบบพิมพ์ค้นหา) ---------- */
 const comboEl=document.createElement('div');comboEl.className='combo hidden';document.body.appendChild(comboEl);
 let comboInput=null,comboItems=[],comboIdx=-1;
-function comboSource(name){return name==='depts'?settings.depts:[]}
+function comboSource(name){return name==='depts'?settings.depts:name==='contractors'?(settings.contractors||[]):[]}
 function comboMatches(name,q){
   const list=comboSource(name);q=q.trim().toLowerCase();
   if(!q)return list.slice();
