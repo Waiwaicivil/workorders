@@ -204,6 +204,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .log .txt{white-space:pre-wrap;margin-top:2px}
 .log .del{opacity:0;border:0;background:transparent;color:var(--faint);font-size:12px;padding:0 4px;margin-left:auto}
 .log li:hover .del{opacity:1}
+@media (hover:none){.log .del{opacity:1}}
 .log .del:hover{color:var(--danger)}
 .note{font-size:12.5px;color:var(--muted);background:var(--accent-soft);border-radius:6px;padding:8px 10px}
 .danger-zone{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -469,16 +470,19 @@ let digest={enabled:false,hour:8};
 const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, logDraft={}, inflight={}, ackAt={}; // ackAt = เวลาบนเซิร์ฟเวอร์ของการบันทึกล่าสุดที่เครื่องนี้ได้รับยืนยัน
 let wsGen=0, lastReadTime=0; // wsGen เพิ่มทุกครั้งที่สลับแผนก ผลที่ตอบกลับของแผนกเดิมจะถูกทิ้ง
 let refreshing=false, refreshStartedAt=0, refreshPromise=null;
+let drawerStale=false, ptrDown=false, pendingLogs=0, newItemId=null;
 const serverSnap={};
 
 function defaultFilters(){return {q:'',dept:'',month:'',exec:'',status:'open',sort:'due',tile:''}}
+const UNNAMED_C='ผู้รับเหมา: ไม่ระบุชื่อ';
 function execOf(it){return it.assignee==='ผู้รับเหมา'?('ผู้รับเหมา: '+(it.contractor||'ไม่ระบุชื่อ')):(it.assignee?'ภายในแผนก':'')}
 function execKey(it){return it.assignee==='ผู้รับเหมา'?'c:'+(it.contractor||''):(it.assignee?'in':'')}
-function execLabels(){const names=Array.from(new Set((settings.contractors||[]).concat(Object.values(items).concat(Object.values(archive)).filter(it=>it.assignee==='ผู้รับเหมา'&&it.contractor).map(it=>it.contractor))));return ['ภายในแผนก','ผู้รับเหมา (ทุกเจ้า)'].concat(names.map(n=>'ผู้รับเหมา: '+n))}
+function execLabels(){const names=Array.from(new Set((settings.contractors||[]).concat(Object.values(items).concat(Object.values(archive)).filter(it=>it.assignee==='ผู้รับเหมา'&&it.contractor).map(it=>it.contractor))));const hasUn=Object.values(items).concat(Object.values(archive)).some(it=>it.assignee==='ผู้รับเหมา'&&!it.contractor);return ['ภายในแผนก','ผู้รับเหมา (ทุกเจ้า)'].concat(names.map(n=>'ผู้รับเหมา: '+n),hasUn?[UNNAMED_C]:[])}
 function execPred(){
   const t=String(filters.exec||'').trim();if(!t)return null;
   if(t==='ภายในแผนก')return it=>it.assignee==='ภายในแผนก';
   if(t==='ผู้รับเหมา (ทุกเจ้า)')return it=>it.assignee==='ผู้รับเหมา';
+  if(t===UNNAMED_C)return it=>it.assignee==='ผู้รับเหมา'&&!it.contractor;
   if(t.startsWith('ผู้รับเหมา: '))return it=>it.assignee==='ผู้รับเหมา'&&(it.contractor||'')===t.slice(12);
   const q=t.toLowerCase();return it=>execOf(it).toLowerCase().includes(q);
 }
@@ -513,7 +517,7 @@ function newId(){return 'wo_'+Date.now().toString(36)+Math.random().toString(36)
 function beYear(){return new Date().getFullYear()+543}
 function errMsg(e){return String(e&&e.message||e||'')}
 function safeUrl(u){u=String(u||'');return /^https?:\/\//i.test(u)?u:''}
-function cleanMsg(m){return m.replace(/^.*?(AUTH|PERM|DUP|CONFLICT):/,'').replace(/^(Error|Exception):\s*/,'')}
+function cleanMsg(m){return m.replace(/^.*?INVALID:[A-Za-z]+:/,'').replace(/^.*?(AUTH|PERM|DUP|CONFLICT|GONE|LIMIT|NET|TIMEOUT):/,'').replace(/^(Error|Exception):\s*/,'')}
 function linkify(text){return esc(text).replace(/(https?:\/\/[^\s<]+)/g,u=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`)}
 function urlsIn(text){return (String(text||'').match(/https?:\/\/[^\s<]+/g)||[])}
 function dueLabel(it){
@@ -592,6 +596,7 @@ async function doLogout(){try{await gs('logout')}catch(e){}
   // ปิดหน้าต่างบังคับเปลี่ยนรหัสด้วย (ไม่ให้ค้างไปถึงคนที่ล็อกอินถัดไป) และทิ้งผลโหลดที่ยังค้างของบัญชีเดิม
   wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
   const fm=$('#modal');if(fm)fm.removeAttribute('data-forced');
+  clearFileCaches();
   clearSession();closeModal();render();showLogin('ออกจากระบบแล้ว')}
 
 /* ---------- โหลดข้อมูล ---------- */
@@ -648,7 +653,7 @@ async function refreshRun(silent,gen){
     if(r.digest)digest=r.digest;
     applyServer(r.items,'active',lastReadTime);
     mode='sheet';setSync(true,'เชื่อมกับ Google Sheet แล้ว');
-    render();
+    renderBg();
     if(page==='archive')loadArchive(false);
   }catch(e){
     if(gen!==wsGen)return;
@@ -670,7 +675,7 @@ async function loadArchiveRun(gen){
     const r=await gs('getAll',{archive:true});
     if(gen!==wsGen)return;
     applyServer(r.items,'archive',r.serverTime||Date.now());archiveLoadedAt=Date.now();
-    if(page==='archive'){mode='sheet';render()}else{renderFilters()}
+    if(page==='archive'){mode='sheet';renderBg()}else{renderFilters()}
   }catch(e){if(gen!==wsGen)return;console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
   finally{if(gen===wsGen){archiveLoading=false;archivePromise=null}}
 }
@@ -706,6 +711,7 @@ async function saveNow(id,attempt){
     const doc=clone(it);delete doc.log;delete doc.files;doc.base=base[id]||0;
     const r=await gs('saveItem',doc);
     delete inflight[id];ackAt[id]=r.updatedAt;
+    {const sn=Object.assign(clone(doc),{no:r.no,updatedAt:r.updatedAt,updatedBy:r.updatedBy,signed:r.signed,signedAt:r.signedAt,signedBy:r.signedBy});delete sn.base;delete sn.autoNo;const old=serverSnap[id]||{};sn.files=r.files||old.files||[];sn.log=old.log||[];serverSnap[id]=sn}
     const cur=findItem(id);
     if(cur){
       base[id]=r.updatedAt;cur.updatedAt=r.updatedAt;cur.updatedBy=r.updatedBy;
@@ -739,17 +745,31 @@ async function saveNow(id,attempt){
         if(clash.length)toast('ช่อง '+clash.map(f=>FIELD_TH[f]||f).join(', ')+' ถูก '+(snap.updatedBy||'ผู้ใช้อื่น')+' แก้ไปพร้อมกัน ระบบใช้ค่าที่คุณพิมพ์ กรุณาตรวจอีกครั้ง',true);
         // ตั้งฐานใหม่เป็นสำเนาล่าสุดจากชีท แล้ววางเฉพาะช่องที่เราแก้ทับ
         const loc=findItem(id);
+        // เครื่องอื่นเซ็นรับไปแล้ว และเราไม่ใช่ผู้ดูแลระบบ → แก้ต่อไม่ได้ ทิ้งสิ่งที่แก้ค้าง ไม่วนบันทึกซ้ำ
+        const lockedNow=!!snap.signed&&!isAdmin();
+        if(lockedNow)dirty[id]={};
         if(loc){const logs=mergeLogs(snap.log,loc.log,lastReadTime-15000);const files=uploading[id]?loc.files:snap.files;
           Object.assign(loc,clone(snap),dirty[id]||{});loc.log=logs;loc.files=files;
           if(loc.signed&&items[id]){delete items[id];archive[id]=loc}else if(!loc.signed&&archive[id]){delete archive[id];items[id]=loc}}
         base[id]=snap.updatedAt||0;
+        if(lockedNow){toast('ใบงานนี้ถูกเซ็นรับไปแล้วระหว่างที่คุณแก้ไข สิ่งที่แก้ค้างไว้ไม่ได้บันทึก',true);setSaveState(id,'error','ใบงานถูกเซ็นรับแล้ว แก้ไขไม่ได้');renderBg();return}
       }
       if(attempt<2)return saveNow(id,attempt+1);
       setSaveState(id,'error',cleanMsg(m));
     }else if(m.indexOf('AUTH:')>=0){
       // หลุดจากระบบกลางทาง: เก็บสิ่งที่แก้ไว้ รอล็อกอินใหม่แล้วบันทึกต่อ
       dirty[id]=Object.assign(sent,dirty[id]||{});setSaveState(id,'error','ยังไม่ได้บันทึก (หลุดจากระบบ) ล็อกอินใหม่เพื่อบันทึกต่อ');
-    }else if(m.indexOf('PERM:')>=0||m.indexOf('DUP:')>=0){
+    }else if(m.indexOf('DUP:')>=0||m.indexOf('INVALID:')>=0){
+      // ผิดช่องเดียว (เลขที่ซ้ำ / รูปแบบไม่ถูก): คืนค่าเดิมเฉพาะช่องนั้น ช่องอื่นที่แก้ไว้บันทึกต่อ ไม่นับเป็นเน็ตหลุด
+      const fm=m.match(/INVALID:([A-Za-z]+):/);const bad=m.indexOf('DUP:')>=0?'no':(fm?fm[1]:'');
+      const rest=Object.assign(sent,dirty[id]||{});
+      const cur=findItem(id),snap=serverSnap[id];
+      if(bad&&(bad in rest)){delete rest[bad];if(cur)cur[bad]=snap&&snap[bad]!=null?snap[bad]:''}
+      else Object.keys(rest).forEach(k=>delete rest[k]);
+      dirty[id]=rest;toast(cleanMsg(m),true);setSaveState(id,'error',cleanMsg(m));
+      if(Object.keys(rest).length&&attempt<2){saving[id]=false;return saveNow(id,attempt+1)}
+      refresh(true);
+    }else if(m.indexOf('PERM:')>=0){
       toast(cleanMsg(m),true);dirty[id]={};setSaveState(id,'error',cleanMsg(m));refresh(true);
     }else{
       dirty[id]=Object.assign(sent,dirty[id]||{});
@@ -761,14 +781,13 @@ async function saveNow(id,attempt){
   saving[id]=false;
   if(saveAgain[id]||(ok&&dirty[id]&&Object.keys(dirty[id]).length)){delete saveAgain[id];saveNow(id,0)}
   // ถ้ากำลังพิมพ์อยู่ในแผงรายละเอียด ไม่ rebuild แผง (กันแป้นพิมพ์มือถือหุบ)
-  const ae=document.activeElement;
-  if(ae&&$('#drawer').contains(ae)&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)){renderSummary();renderMain();renderSaveState();renderUnsaved()}
-  else render();
+  renderBg();
 }
 const FIELD_TH={no:'เลขที่',title:'หัวข้องาน',dept:'แผนกที่ขอ',type:'ประเภทงาน',priority:'ความสำคัญ',status:'สถานะ',requester:'ผู้ขอ',location:'สถานที่',received:'วันรับใบงาน',start:'วันเริ่มงาน',due:'กำหนดเสร็จ',finished:'วันเสร็จจริง',progress:'ความคืบหน้า',detail:'รายละเอียด',assignee:'ผู้รับผิดชอบ',budget:'งบ',contractor:'ผู้รับเหมา',poRef:'PR/PO',signed:'เซ็นรับ'};
 function retryAll(){Object.keys(dirty).forEach(id=>{if(dirty[id]&&Object.keys(dirty[id]).length&&findItem(id)&&!saving[id])saveNow(id,0)})}
 function hasUnsaved(){return Object.keys(writeTimers).length>0||Object.keys(saving).some(k=>saving[k])||Object.keys(dirty).some(k=>dirty[k]&&Object.keys(dirty[k]).length&&findItem(k))}
-window.addEventListener('beforeunload',e=>{if(hasUnsaved()){e.preventDefault();e.returnValue='ยังบันทึกไม่เสร็จ';return e.returnValue}});
+function hasPendingWork(){return hasUnsaved()||pendingLogs>0||Object.keys(uploading).length>0}
+window.addEventListener('beforeunload',e=>{if(hasPendingWork()){e.preventDefault();e.returnValue='ยังบันทึกไม่เสร็จ';return e.returnValue}});
 function renderUnsaved(){
   const bad=Object.keys(saveState).filter(id=>saveState[id].state==='error'&&dirty[id]&&Object.keys(dirty[id]).length&&findItem(id));
   const b=$('#unsavedBanner');b.classList.toggle('hidden',!bad.length);
@@ -783,24 +802,29 @@ function removeItem(id){
 /* ---------- บันทึกความคืบหน้า (append รายแถว) ---------- */
 function addLogEntry(id,text,status){
   const it=findItem(id);if(!it||!canEditItem(it))return;
-  const entry={ts:Date.now(),status:status||it.status,text,by:me(),pending:true};
+  const entry={ts:Date.now(),status:status||it.status,text,by:me(),u:session?session.user.username:'',pending:true};
   it.log=(it.log||[]).concat([entry]);
+  pendingLogs++;
   renderDrawer();
   gs('addLog',id,it.no,text,entry.status).then(r=>{
     const cur=findItem(id);if(!cur)return;
-    cur.log=(cur.log||[]).map(l=>l===entry||l.ts===entry.ts?Object.assign({},r,{pending:false}):l);
-    renderDrawer();
+    cur.log=(cur.log||[]).map(l=>l===entry||(l.pending&&l.ts===entry.ts)?Object.assign({},r,{pending:false}):l);
+    renderDrawerBg();
   }).catch(e=>{
-    const cur=findItem(id);if(cur)cur.log=(cur.log||[]).filter(l=>l.ts!==entry.ts);
-    if(!/^เปลี่ยนสถานะ|^เซ็นรับ|^ยกเลิกการเซ็น/.test(text))logDraft[id]=text;
-    toast('บันทึกความคืบหน้าไม่สำเร็จ: '+cleanMsg(errMsg(e)),true);renderDrawer();
-  });
+    const cur=findItem(id);if(cur)cur.log=(cur.log||[]).filter(l=>l!==entry&&!(l.pending&&l.ts===entry.ts));
+    if(!/^เปลี่ยนสถานะ|^เซ็นรับ|^ยกเลิกการเซ็น|^รับใบงาน$/.test(text)){
+      // คืนข้อความให้พิมพ์ส่งใหม่ โดยไม่ทับสิ่งที่พิมพ์ต่อไว้แล้ว
+      const ta=openId===id?$('#logText'):null;const typed=ta?ta.value:(logDraft[id]||'');
+      const merged=typed.trim()?text+'\n'+typed:text;logDraft[id]=merged;if(ta)ta.value=merged;
+    }
+    toast('บันทึกความคืบหน้าไม่สำเร็จ: '+cleanMsg(errMsg(e)),true);renderDrawerBg();
+  }).then(()=>{pendingLogs=Math.max(0,pendingLogs-1)});
 }
 function deleteLogEntry(id,ts){
   const it=findItem(id);if(!it)return;
   const entry=(it.log||[]).find(l=>String(l.ts)===String(ts));if(!entry)return;
   it.log=it.log.filter(l=>l!==entry);renderDrawer();
-  gs('deleteLog',id,ts).then(()=>toast('ลบบันทึกแล้ว')).catch(e=>{const cur=findItem(id);if(cur)cur.log=(cur.log||[]).concat([entry]);toast(cleanMsg(errMsg(e)),true);renderDrawer()});
+  gs('deleteLog',id,ts,entry.by).then(()=>toast('ลบบันทึกแล้ว')).catch(e=>{const cur=findItem(id);if(cur)cur.log=(cur.log||[]).concat([entry]);toast(cleanMsg(errMsg(e)),true);renderDrawerBg()});
 }
 function setStatus(id,status){
   const it=findItem(id);if(!it||it.status===status||!canEditItem(it))return;
@@ -825,28 +849,29 @@ function signItem(id,on){
 /* ---------- ไฟล์แนบ (เก็บในไดรฟ์เจ้าของ ไม่แชร์สาธารณะ เปิดผ่านแอปหลังล็อกอิน) ---------- */
 const uploading={};
 function isImg(f){return /^image\//i.test(f.mime||'')||/\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name||'')}
-const thumbCache={};const thumbLoading={};
+const thumbCache={};const thumbLoading={};const thumbFailed={};
 function thumbHtml(f){
   if(thumbCache[f.id])return `<img src="${thumbCache[f.id]}" alt="${esc(f.name)}">`;
+  if(thumbFailed[f.id])return '<div class="ph">โหลดรูปย่อไม่ได้</div>';
   loadThumb(f.id);
   return `<div class="ph">⏳</div>`;
 }
 function loadThumb(fileId){
-  if(thumbCache[fileId]||thumbLoading[fileId]||!openId)return;
+  if(thumbCache[fileId]||thumbLoading[fileId]||thumbFailed[fileId]||!openId)return;
   thumbLoading[fileId]=true;
   const id=openId;
   gs('getFile',id,fileId).then(r=>{
     const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-    const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[fileId]=blob;
+    const blob=new Blob([arr],{type:safeMime(r.mime)});cacheFile(fileId,blob);
     thumbCache[fileId]=URL.createObjectURL(blob);
     $$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.outerHTML=`<img src="${thumbCache[fileId]}" alt="">`});
-  }).catch(e=>{$$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.textContent='โหลดไม่ได้'})}).then(()=>{delete thumbLoading[fileId]});
+  }).catch(e=>{thumbFailed[fileId]=true;$$('.photo[data-fopen="'+fileId+'"] .ph').forEach(ph=>{ph.textContent='โหลดรูปย่อไม่ได้'})}).then(()=>{delete thumbLoading[fileId]});
 }
 async function imagesForPrint(it){
   const imgs=(it.files||[]).filter(isImg);
   const out=[];
   for(const f of imgs){
-    if(!thumbCache[f.id]){try{const r=await gs('getFile',it.id,f.id);const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[f.id]=blob;thumbCache[f.id]=URL.createObjectURL(blob)}catch(e){continue}}
+    if(!thumbCache[f.id]){try{const r=await gs('getFile',it.id,f.id);const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);const blob=new Blob([arr],{type:safeMime(r.mime)});cacheFile(f.id,blob);thumbCache[f.id]=URL.createObjectURL(blob)}catch(e){continue}}
     out.push({name:f.name,src:thumbCache[f.id],by:f.by,ts:f.ts});
   }
   return out;
@@ -880,12 +905,15 @@ async function uploadFileUI(id,file){
   rd.onload=()=>{
     const b64=String(rd.result).split(',')[1];
     if(gen!==wsGen){delete uploading[id];return}
-    gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว')}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawer()});
+    gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว')}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawerBg()});
   };
   rd.onerror=()=>{delete uploading[id];toast('อ่านไฟล์ไม่ได้');renderDrawer()};
   rd.readAsDataURL(file);
 }
 const fileCache={};
+// เก็บไฟล์ที่ดึงมาไว้ไม่เกิน 40 ไฟล์ และคืนหน่วยความจำรูปเมื่อสลับแผนก/ออกจากระบบ
+function cacheFile(id,blob){fileCache[id]=blob;const ks=Object.keys(fileCache);if(ks.length>40){const k=ks[0];delete fileCache[k];if(thumbCache[k]&&!$('.photo[data-fopen="'+k+'"] img')){try{URL.revokeObjectURL(thumbCache[k])}catch(e){}delete thumbCache[k]}}}
+function clearFileCaches(){Object.keys(thumbCache).forEach(k=>{try{URL.revokeObjectURL(thumbCache[k])}catch(e){}delete thumbCache[k]});Object.keys(fileCache).forEach(k=>delete fileCache[k]);Object.keys(thumbFailed).forEach(k=>delete thumbFailed[k])}
 const INLINE_MIME=/^(image\/(jpeg|png|webp|gif|heic|heif)|application\/pdf)$/i;
 function safeMime(m){m=String(m||'').toLowerCase().trim();return INLINE_MIME.test(m)?m:'application/octet-stream'}
 function openFileUI(id,fileId){
@@ -899,12 +927,12 @@ function openFileUI(id,fileId){
   toast('กำลังดึงไฟล์ '+f.name+'…',true);
   gs('getFile',id,fileId).then(r=>{
     const bin=atob(r.b64);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-    const blob=new Blob([arr],{type:safeMime(r.mime)});fileCache[fileId]=blob;show(blob);
+    const blob=new Blob([arr],{type:safeMime(r.mime)});cacheFile(fileId,blob);delete thumbFailed[fileId];show(blob);
   }).catch(e=>toast('เปิดไฟล์ไม่สำเร็จ: '+cleanMsg(errMsg(e)),true));
 }
 function deleteFileUI(id,fileId){
   const it=findItem(id);if(!it)return;
-  gs('deleteFile',id,fileId).then(r=>{const cur=findItem(id);if(cur)cur.files=r.files;toast('ลบไฟล์แล้ว');renderDrawer()}).catch(e=>toast(cleanMsg(errMsg(e)),true));
+  gs('deleteFile',id,fileId).then(r=>{const cur=findItem(id);if(cur)cur.files=r.files;toast('ลบไฟล์แล้ว');renderDrawerBg()}).catch(e=>toast(cleanMsg(errMsg(e)),true));
 }
 
 /* ---------- กรอง / เรียง ---------- */
@@ -998,6 +1026,7 @@ function renderFilters(){
   if($('#q').value!==filters.q&&document.activeElement!==$('#q'))$('#q').value=filters.q;
   const fm=$('#fMonth');
   const months=Array.from(new Set(Object.values(pool()).map(it=>String(it.received||'').slice(0,7)).filter(m=>/^\d{4}-\d{2}$/.test(m)))).sort().reverse();
+  if(filters.month&&!months.includes(filters.month)){months.push(filters.month);months.sort().reverse()}
   const TH=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
   const mh='<option value="">ทุกเดือนที่รับเรื่อง</option>'+months.map(m=>`<option value="${m}" ${m===filters.month?'selected':''}>รับเรื่อง ${TH[parseInt(m.slice(5),10)-1]} ${parseInt(m.slice(0,4),10)+543}</option>`).join('');
   if(fm.innerHTML!==mh)fm.innerHTML=mh;
@@ -1143,7 +1172,13 @@ function saveStateText(id){
   return '';
 }
 function renderSaveState(){const el=$('#saveState');if(!el||!openId)return;const t=saveStateText(openId);el.textContent=t;el.className='savestate '+((saveState[openId]||{}).state||'')}
+// กำลังพิมพ์/เลือกค่าอยู่ในแผงรายละเอียดหรือไม่ (ถ้าใช่ งานเบื้องหลังจะไม่สร้างแผงใหม่ทับ)
+function typingInDrawer(){const ae=document.activeElement;return !!(ae&&openId&&$('#drawer').contains(ae)&&(/^(TEXTAREA|SELECT)$/.test(ae.tagName)||(ae.tagName==='INPUT'&&!/^(checkbox|radio|button|submit|file)$/.test(ae.type))))}
+function renderBg(){if(typingInDrawer()){if(comboInput&&!comboInput.isConnected)comboClose();renderSummary();renderFilters();renderMain();renderUnsaved();renderSaveState();drawerStale=true}else render()}
+function renderDrawerBg(){if(typingInDrawer()){drawerStale=true;renderSaveState()}else renderDrawer()}
+function flushDrawer(){if(drawerStale&&!ptrDown&&!typingInDrawer())renderDrawer()}
 function renderDrawer(){
+  drawerStale=false;
   const dr=$('#drawer'),sc=$('#scrim');
   const it=openId&&findItem(openId);
   if(!it){dr.classList.remove('show');sc.classList.remove('show');dr.innerHTML='';return}
@@ -1214,7 +1249,7 @@ function renderDrawer(){
           <textarea id="logText" placeholder="วันนี้ทำอะไรไปถึงไหน / ติดปัญหาอะไร / รออะไรอยู่">${esc(logDraft[it.id]||'')}</textarea>
           <div class="r"><span class="hint">บันทึกจะติดวันเวลา ชื่อผู้บันทึก และสถานะ ณ ตอนนั้นให้อัตโนมัติ (Ctrl/⌘+Enter เพื่อบันทึก)</span><button class="btn primary sm" id="logAdd">บันทึก</button></div>
         </div>`}
-        <ul class="log">${logs.length?logs.map(l=>{const mine=l.by&&l.by===me();const canDel=!ro&&(isAdmin()||mine)&&!l.pending;return `<li data-ts="${esc(l.ts)}"><span class="dot"></span><div><div class="when"><span class="mono">${fmtDT(l.ts)}</span>${l.by?`<span class="by">${esc(l.by)}</span>`:''}${l.status?chipStatus(l.status):''}${l.pending?'<span class="readonly-note">กำลังบันทึก…</span>':''}${canDel?`<button class="del" data-del="${esc(l.ts)}" title="ลบบันทึกนี้">ลบ</button>`:''}</div><div class="txt">${linkify(l.text)}</div></div></li>`}).join(''):'<li style="grid-template-columns:1fr"><span style="color:var(--faint);font-size:12.5px">ยังไม่มีบันทึก</span></li>'}</ul>
+        <ul class="log">${logs.length?logs.map(l=>{const mine=l.u?(!!session&&String(l.u).toLowerCase()===String(session.user.username).toLowerCase()):(!!l.by&&l.by===me());const canDel=!ro&&(isAdmin()||mine)&&!l.pending;return `<li data-ts="${esc(l.ts)}"><span class="dot"></span><div><div class="when"><span class="mono">${fmtDT(l.ts)}</span>${l.by?`<span class="by">${esc(l.by)}</span>`:''}${l.status?chipStatus(l.status):''}${l.pending?'<span class="readonly-note">กำลังบันทึก…</span>':''}${canDel?`<button class="del" data-del="${esc(l.ts)}" title="ลบบันทึกนี้">ลบ</button>`:''}</div><div class="txt">${linkify(l.text)}</div></div></li>`}).join(''):'<li style="grid-template-columns:1fr"><span style="color:var(--faint);font-size:12.5px">ยังไม่มีบันทึก</span></li>'}</ul>
       </div>
       <div class="sect"><h3>อื่น ๆ</h3>
         <div class="danger-zone">
@@ -1255,6 +1290,9 @@ async function printItem(it){
       <div><div class="line"></div>ผู้ขอ / ตัวแทนแผนก<br><span>วันที่ ______/______/________</span></div>
       <div><div class="line"></div>ผู้ตรวจรับ / เซ็นรับงาน<br><span>วันที่ ______/______/________</span></div>
     </div>`;
+  // รอรูปโหลดเสร็จก่อนสั่งพิมพ์ (สูงสุด 5 วินาที) ไม่งั้นรูปที่เพิ่งใส่อาจยังไม่ขึ้นบนกระดาษ
+  const pimgs=$$('#printArea img');
+  if(pimgs.length)await Promise.race([Promise.all(pimgs.map(i=>i.decode?i.decode().catch(()=>{}):Promise.resolve())),new Promise(r=>setTimeout(r,5000))]);
   document.body.classList.add('printing');
   const done=()=>{document.body.classList.remove('printing');window.removeEventListener('afterprint',done);setTimeout(()=>{$('#printArea').innerHTML=''},500)};
   window.addEventListener('afterprint',done);
@@ -1273,6 +1311,7 @@ function exportCsv(){
 
 /* ---------- หน้าต่าง: ใบงานใหม่ / บัญชี / ตั้งค่า ---------- */
 function showNewModal(){
+  newItemId=newId(); // กดสร้างซ้ำหลังเน็ตหลุดใช้ id เดิม เซิร์ฟเวอร์จะไม่สร้างใบซ้ำ
   const t=todayISO();const sf=simpleForm();
   const optS=(list)=>list.map(x=>`<option>${esc(x)}</option>`).join('');
   $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box">
@@ -1303,7 +1342,7 @@ async function createItem(){
   const title=$('#nTitle').value.trim();
   if(!title){$('#nTitle').focus();err.textContent='กรุณากรอกหัวข้องาน';return}
   const no=$('#nNo').value.trim();
-  const id=newId();
+  const id=newItemId||(newItemId=newId());
   const doc={id,no,autoNo:!no,title,dept:$('#nDept').value.trim(),type:$('#nType').value,priority:$('#nPri').value,status:$('#nStatus').value,
     requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value,contractor:$('#nAssignee').value==='ผู้รับเหมา'?$('#nContractor').value.trim():'',budget:'',poRef:'',
     received:$('#nRec').value,start:$('#nStart').value,due:$('#nDue').value,finished:'',progress:pctOf($('#nStatus').value),signed:false,signedAt:'',signedBy:'',
@@ -1313,7 +1352,7 @@ async function createItem(){
     const r=await gs('saveItem',doc);
     delete doc.autoNo;delete doc.base;
     doc.no=r.no;doc.updatedAt=r.updatedAt;doc.updatedBy=r.updatedBy;doc.files=[];doc.log=[];
-    items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;
+    items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;serverSnap[id]=clone(doc);newItemId=null;
     closeModal();filters.tile='';render();
     toast('สร้างใบงาน '+doc.no+' แล้ว');
     addLogEntry(id,'รับใบงาน',doc.status);
@@ -1396,10 +1435,11 @@ function applyWs(){
   const mk=$('.brand .mark');if(mk)mk.textContent=WORKSPACES[ws].prefix;
 }
 $('#wsSel').addEventListener('change',e=>{
-  if(hasUnsaved()){toast('รอบันทึกให้เสร็จก่อนสลับพื้นที่งาน',true);e.target.value=ws;return}
+  if(hasPendingWork()){toast('รอบันทึกหรืออัปโหลดให้เสร็จก่อนสลับพื้นที่งาน',true);e.target.value=ws;return}
   ws=WORKSPACES[e.target.value]?e.target.value:'civil';
   try{localStorage.setItem('wo-workspace',ws)}catch(x){}
   wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
+  clearFileCaches();
   items={};archive={};archiveLoadedAt=0;openId=null;page='active';filters=defaultFilters();mode='connecting';
   applyWs();render();refresh(false);
 });
@@ -1484,7 +1524,15 @@ drawer.addEventListener('click',e=>{
   }
 });
 drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();$('#logAdd').click()}});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modal'))closeModal();else if(openId)closeDrawer()}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(comboInput&&!comboEl.classList.contains('hidden')){comboClose();return}if($('#modal'))closeModal();else if(openId)closeDrawer()}});
+drawer.addEventListener('focusout',()=>setTimeout(flushDrawer,0));
+document.addEventListener('pointerdown',()=>{ptrDown=true},true);
+document.addEventListener('pointerup',()=>{ptrDown=false;setTimeout(flushDrawer,0)},true);
+document.addEventListener('pointercancel',()=>{ptrDown=false},true);
+// หน้าต่างบังคับเปลี่ยนรหัส: กด Tab ออกไปปุ่มด้านหลังไม่ได้
+document.addEventListener('focusin',e=>{const fm=$('#modal[data-forced]');if(fm&&!fm.contains(e.target)&&!$('#login').contains(e.target)){const f=$('input,button',fm);if(f)f.focus()}});
+let modalPress=null;
+$('#modalHost').addEventListener('mousedown',e=>{modalPress=e.target});
 
 $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='nAssignee'){$('#nContractorWrap').classList.toggle('hidden',e.target.value!=='ผู้รับเหมา');return}
@@ -1496,9 +1544,11 @@ $('#modalHost').addEventListener('change',e=>{
 });
 $('#modalHost').addEventListener('click',e=>{
   const t=e.target;
-  if(t.id==='mCancel'||t.id==='modal')return closeModal();
+  if(t.id==='mCancel')return closeModal();
+  // ปิดเมื่อกดและปล่อยบนพื้นหลังเท่านั้น (ลากคลุมข้อความแล้วปล่อยนอกกรอบ ฟอร์มไม่หาย)
+  if(t.id==='modal'){if(modalPress===t)closeModal();return}
   if(t.id==='esPickBtn'){execPickOpen=!execPickOpen;$('#esPickMenu').classList.toggle('hidden',!execPickOpen);return}
-  if(t.dataset.execfilter!==undefined){const k=t.dataset.execfilter;filters.exec=k==='in'?'ภายในแผนก':'ผู้รับเหมา: '+k.slice(2);closeModal();page='active';render();return}
+  if(t.dataset.execfilter!==undefined){const k=t.dataset.execfilter;filters.exec=k==='in'?'ภายในแผนก':k==='c:'?UNNAMED_C:'ผู้รับเหมา: '+k.slice(2);closeModal();page='active';render();return}
   if(t.id==='mSave')return createItem();
   if(t.id==='uLogout'){doLogout();return}
   if(t.id==='pwSave'){
@@ -1562,12 +1612,15 @@ function comboOpen(input){
   const q=input.value.trim();
   const split=input.dataset.combo==='depts';
   comboEl.innerHTML=comboItems.length?comboItems.map((d,i)=>{const m=split?d.match(/^(\S+)\s+(.*)$/):null;return `<div data-i="${i}">${m?'<span class="code">'+esc(m[1])+'</span>'+esc(m[2]):esc(d)}</div>`}).join(''):`<div class="none">ไม่พบรายการที่ตรงกับ “${esc(q)}” ${q?'· ใช้ค่าที่พิมพ์ได้เลย':''}</div>`;
+  comboPosition(input);
+  comboEl.classList.remove('hidden');
+}
+function comboPosition(input){
   const r=input.getBoundingClientRect();
   comboEl.style.left=r.left+'px';comboEl.style.width=Math.max(r.width,260)+'px';
   const below=window.innerHeight-r.bottom;
   if(below<200&&r.top>below){comboEl.style.top='';comboEl.style.bottom=(window.innerHeight-r.top+2)+'px';comboEl.style.maxHeight=Math.min(360,r.top-10)+'px'}
   else{comboEl.style.bottom='';comboEl.style.top=(r.bottom+2)+'px';comboEl.style.maxHeight=Math.min(360,below-10)+'px'}
-  comboEl.classList.remove('hidden');
 }
 function comboClose(){comboEl.classList.add('hidden');comboInput=null;comboIdx=-1}
 function comboPick(i){
@@ -1592,7 +1645,7 @@ document.addEventListener('keydown',e=>{
 comboEl.addEventListener('mousedown',e=>{e.preventDefault();const d=e.target.closest('div[data-i]');if(d)comboPick(parseInt(d.dataset.i,10))});
 document.addEventListener('mousedown',e=>{if(comboInput&&e.target!==comboInput&&!comboEl.contains(e.target))comboClose()});
 document.addEventListener('focusout',e=>{if(comboInput&&e.target===comboInput)setTimeout(()=>{if(document.activeElement!==comboInput)comboClose()},150)});
-window.addEventListener('scroll',()=>{if(comboInput)comboOpen(comboInput)},true);
+window.addEventListener('scroll',e=>{if(comboInput&&e.target!==comboEl)comboPosition(comboInput)},true);
 
 /* ---------- boot ---------- */
 render();
