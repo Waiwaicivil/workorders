@@ -1427,8 +1427,8 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modal'))clos
 $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='nAssignee'){$('#nContractorWrap').classList.toggle('hidden',e.target.value!=='ผู้รับเหมา');return}
   if(e.target.id==='esYear'||e.target.id==='esMonth'){execPeriod.y=$('#esYear').value;execPeriod.m=$('#esMonth').value;showExecStatsModal();return}
-  if(e.target.id==='esAll'){execPick=null;execPickOpen=true;showExecStatsModal();return}
-  if(e.target.dataset.espick!==undefined){const k=e.target.dataset.espick;if(!execPick)execPick=new Set();if(e.target.checked)execPick.add(k);else execPick.delete(k);if(!execPick.size)execPick=null;execPickOpen=true;showExecStatsModal();return}
+  if(e.target.id==='esAll'){execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
+  if(e.target.dataset.espick!==undefined){const k=e.target.dataset.espick;if(!execPick)execPick=new Set();if(e.target.checked)execPick.add(k);else execPick.delete(k);if(!execPick.size)execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
   const cb=e.target;if(!cb||cb.dataset.uf!=='simpleForm')return;
   const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
 });
