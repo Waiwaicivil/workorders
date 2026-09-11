@@ -1348,6 +1348,10 @@ drawer.addEventListener('click',e=>{
 drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();$('#logAdd').click()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modal'))closeModal();else if(openId)closeDrawer()}});
 
+$('#modalHost').addEventListener('change',e=>{
+  const cb=e.target;if(!cb||cb.dataset.uf!=='simpleForm')return;
+  const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
+});
 $('#modalHost').addEventListener('click',e=>{
   const t=e.target;
   if(t.id==='mCancel'||t.id==='modal')return closeModal();
@@ -1363,7 +1367,7 @@ $('#modalHost').addEventListener('click',e=>{
   }
   if(t.dataset.usave){
     const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,password:$('[data-uf="password"]',tr).value};
-    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
+    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto();if(session&&u.username===session.user.username){session.user.simpleForm=u.simpleForm;session.user.email=u.email;saveSession();refresh(true)}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
   }
   if(t.dataset.udel){
