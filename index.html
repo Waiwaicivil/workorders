@@ -425,13 +425,13 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 
 /* ---------- ค่าคงที่: server ใส่ให้ตอนเปิดหน้า (แหล่งเดียวคือ Code.gs) ---------- */
 const FALLBACK={
-  STATUSES:[{id:'received',name:'รับเรื่อง',tone:'grey'},{id:'survey',name:'สำรวจหน้างาน',tone:'blue'},{id:'plan',name:'วางแผน',tone:'blue'},{id:'design',name:'เขียนแบบ / ประเมินราคา',tone:'blue'},{id:'deptreply',name:'รอข้อสรุปจากแผนก',tone:'amber'},{id:'approval',name:'รออนุมัติ',tone:'amber'},{id:'progress',name:'กำลังดำเนินการ',tone:'teal'},{id:'waiting',name:'รอวัสดุ / ผู้รับเหมา',tone:'amber'},{id:'done',name:'เสร็จแล้ว',tone:'green'},{id:'cancel',name:'ยกเลิก',tone:'mute'}],
+  STATUSES:[{id:'received',name:'รับเรื่อง',tone:'grey',pct:0},{id:'survey',name:'สำรวจ',tone:'blue',pct:20},{id:'design',name:'เขียนแบบ / ประเมินราคา',tone:'blue',pct:30},{id:'pr',name:'เปิด PR แล้ว',tone:'amber',pct:40},{id:'po',name:'มี PO แล้ว',tone:'amber',pct:50},{id:'progress',name:'กำลังดำเนินการ',tone:'teal',pct:50},{id:'done',name:'เสร็จแล้ว',tone:'green',pct:100},{id:'cancel',name:'ยกเลิก',tone:'mute',pct:0}],
   PRIORITIES:[{id:'p1',name:'ด่วนมาก'},{id:'p2',name:'ด่วน'},{id:'p3',name:'ปกติ'}],
   ROLE_NAME:{admin:'ผู้ดูแลระบบ',staff:'เจ้าหน้าที่',viewer:'ดูอย่างเดียว'},
   DEFAULT_SETTINGS:{depts:[],types:['ก่อสร้างใหม่','ต่อเติม / ปรับปรุง','ซ่อมแซม','ตรวจสอบ / ประเมิน','เขียนแบบ / ถอดปริมาณ','อื่น ๆ'],sites:['โรงงาน 1','โรงงาน 2','สำนักงาน','คลังสินค้า']},
   WORKSPACES:{civil:{name:'งานแผนกโยธา',prefix:'WO'},special:{name:'งานแผนกเฉพาะกิจ',prefix:'SP'}}
 };
-const C={"STATUSES":[{"id":"received","name":"รับเรื่อง","tone":"grey"},{"id":"survey","name":"สำรวจหน้างาน","tone":"blue"},{"id":"plan","name":"วางแผน","tone":"blue"},{"id":"design","name":"เขียนแบบ / ประเมินราคา","tone":"blue"},{"id":"deptreply","name":"รอข้อสรุปจากแผนก","tone":"amber"},{"id":"approval","name":"รออนุมัติ","tone":"amber"},{"id":"progress","name":"กำลังดำเนินการ","tone":"teal"},{"id":"waiting","name":"รอวัสดุ / ผู้รับเหมา","tone":"amber"},{"id":"done","name":"เสร็จแล้ว","tone":"green"},{"id":"cancel","name":"ยกเลิก","tone":"mute"}],"PRIORITIES":[{"id":"p1","name":"ด่วนมาก"},{"id":"p2","name":"ด่วน"},{"id":"p3","name":"ปกติ"}],"ROLE_NAME":{"admin":"ผู้ดูแลระบบ","staff":"เจ้าหน้าที่","viewer":"ดูอย่างเดียว"},"DEFAULT_SETTINGS":{"depts":[],"types":["ก่อสร้างใหม่","ต่อเติม / ปรับปรุง","ซ่อมแซม","ตรวจสอบ / ประเมิน","เขียนแบบ / ถอดปริมาณ","อื่น ๆ"],"sites":["โรงงาน 1","โรงงาน 2","สำนักงาน","คลังสินค้า"]},"WORKSPACES":{"civil":{"name":"งานแผนกโยธา","prefix":"WO"},"special":{"name":"งานแผนกเฉพาะกิจ","prefix":"SP"}}}||FALLBACK;
+const C={"STATUSES":[{"id":"received","name":"รับเรื่อง","tone":"grey","pct":0},{"id":"survey","name":"สำรวจ","tone":"blue","pct":20},{"id":"design","name":"เขียนแบบ / ประเมินราคา","tone":"blue","pct":30},{"id":"pr","name":"เปิด PR แล้ว","tone":"amber","pct":40},{"id":"po","name":"มี PO แล้ว","tone":"amber","pct":50},{"id":"progress","name":"กำลังดำเนินการ","tone":"teal","pct":50},{"id":"done","name":"เสร็จแล้ว","tone":"green","pct":100},{"id":"cancel","name":"ยกเลิก","tone":"mute","pct":0}],"PRIORITIES":[{"id":"p1","name":"ด่วนมาก"},{"id":"p2","name":"ด่วน"},{"id":"p3","name":"ปกติ"}],"ROLE_NAME":{"admin":"ผู้ดูแลระบบ","staff":"เจ้าหน้าที่","viewer":"ดูอย่างเดียว"},"DEFAULT_SETTINGS":{"depts":[],"types":["ก่อสร้างใหม่","ต่อเติม / ปรับปรุง","ซ่อมแซม","ตรวจสอบ / ประเมิน","เขียนแบบ / ถอดปริมาณ","อื่น ๆ"],"sites":["โรงงาน 1","โรงงาน 2","สำนักงาน","คลังสินค้า"]},"WORKSPACES":{"civil":{"name":"งานแผนกโยธา","prefix":"WO"},"special":{"name":"งานแผนกเฉพาะกิจ","prefix":"SP"}}}||FALLBACK;
 const STATUSES=C.STATUSES, PRIORITIES=C.PRIORITIES, ROLE_NAME=C.ROLE_NAME, DEFAULT_SETTINGS=C.DEFAULT_SETTINGS, WORKSPACES=C.WORKSPACES;
 const CLOSED=new Set(['done','cancel']);
 const SESSION_KEY='wo-civil-session';
@@ -476,6 +476,8 @@ function fmtD(iso){if(!iso)return '—';if(!/^\d{4}-\d{2}-\d{2}$/.test(String(is
 function fmtDT(ts){const d=new Date(Number(ts)||0);if(!Number(ts))return '—';return d.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'})+' '+d.toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}
 function fmtTime(ts){return new Date(ts).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})}
 function statusOf(id){return STATUSES.find(s=>s.id===id)||STATUSES[0]}
+function pctOf(status){const s=STATUSES.find(x=>x.id===status);return s?s.pct:0}
+function simpleForm(){return !!session&&!!session.user.simpleForm}
 function priOf(id){return PRIORITIES.find(p=>p.id===id)||PRIORITIES[2]}
 function isOpen(it){return !it.signed&&it.status!=='cancel'}
 function isPending(it){return it.status==='done'&&!it.signed}
@@ -741,8 +743,8 @@ function deleteLogEntry(id,ts){
 }
 function setStatus(id,status){
   const it=findItem(id);if(!it||it.status===status||!canEditItem(it))return;
-  const f={status};
-  if(status==='done'){f.progress=100;if(!it.finished)f.finished=todayISO()}
+  const f={status,progress:pctOf(status)};
+  if(status==='done'){if(!it.finished)f.finished=todayISO()}
   if(status==='progress'&&!it.start)f.start=todayISO();
   if(status!=='done'&&it.status==='done')f.finished='';
   if(status!=='done'&&it.signed&&isAdmin()){f.signed=false;f.signedAt='';f.signedBy=''}
@@ -947,7 +949,7 @@ function renderMain(){
       <td><span class="pri ${p.id}">${esc(p.name)}</span></td>
       <td class="date mono">${fmtD(it.start)}</td>
       <td class="date"><span class="due ${over?'over':soon?'soon':''}"><span class="mono">${fmtD(it.due)}</span>${dl?`<small>${esc(dl)}</small>`:''}</span></td>
-      <td><span class="bar ${it.status==='done'?'done':''}"><b style="width:${Math.max(0,Math.min(100,it.progress||0))}%"></b></span><span class="pct">${it.progress||0}%</span></td>
+      <td><span class="bar ${it.status==='done'?'done':''}"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></td>
     </tr>`}).join('');
   const cards=arr.map(it=>{
     const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);const p=priOf(it.priority);
@@ -955,7 +957,7 @@ function renderMain(){
       <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}${it.files&&it.files.length?' 📎':''}</span>${chipStatus(it.status,it)}</div>
       <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
       <div class="meta"><span>${esc(it.dept||'—')}</span><span class="pri ${p.id}">${esc(p.name)}</span></div>
-      <div class="row"><span class="due ${over?'over':soon?'soon':''}"><span style="font-size:12.5px">กำหนดเสร็จ <span class="mono">${fmtD(it.due)}</span></span>${dl?`<small>${esc(dl)}</small>`:''}</span><span><span class="bar ${it.status==='done'?'done':''}" style="width:70px"><b style="width:${it.progress||0}%"></b></span><span class="pct">${it.progress||0}%</span></span></div>
+      <div class="row"><span class="due ${over?'over':soon?'soon':''}"><span style="font-size:12.5px">กำหนดเสร็จ <span class="mono">${fmtD(it.due)}</span></span>${dl?`<small>${esc(dl)}</small>`:''}</span><span><span class="bar ${it.status==='done'?'done':''}" style="width:70px"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></span></div>
     </div>`}).join('');
   main.innerHTML=`<div class="tablewrap"><table>
     <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>สถานะ</th><th>ความสำคัญ</th><th>วันเริ่ม</th><th>กำหนดเสร็จ</th><th>คืบหน้า</th></tr></thead>
@@ -1061,7 +1063,7 @@ function renderDrawer(){
           <div class="f"><label>วันเริ่มงาน</label><input type="date" data-f="start" value="${esc(it.start||'')}" ${dis}></div>
           <div class="f"><label>กำหนดเสร็จ</label><input type="date" data-f="due" value="${esc(it.due||'')}" ${dis}></div>
           <div class="f"><label>วันเสร็จจริง</label><input type="date" data-f="finished" value="${esc(it.finished||'')}" ${dis}></div>
-          <div class="f wide"><label>ความคืบหน้า</label><div class="prog"><input type="range" min="0" max="100" step="5" data-f="progress" value="${it.progress||0}" ${dis}><span class="pv">${it.progress||0}%</span></div></div>
+          <div class="f wide"><label>ความคืบหน้า (ปรับอัตโนมัติตามสถานะ)</label><div class="prog"><span class="bar ${it.status==='done'?'done':''}" style="flex:1;width:auto"><b style="width:${pctOf(it.status)}%"></b></span><span class="pv">${pctOf(it.status)}%</span></div></div>
         </div>
         ${isOverdue(it)?`<div class="note" style="margin-top:10px;background:var(--s-red-bg);color:var(--s-red-fg)">เกินกำหนดมา ${Math.abs(daysUntil(it.due))} วัน</div>`:isSoon(it)?`<div class="note" style="margin-top:10px;background:var(--s-amber-bg);color:var(--s-amber-fg)">${daysUntil(it.due)===0?'ครบกำหนดวันนี้':'เหลืออีก '+daysUntil(it.due)+' วัน'}</div>`:''}
       </div>
@@ -1112,7 +1114,7 @@ async function printItem(it){
     <table class="ptable">
       ${row('แผนกที่ขอ',esc(it.dept))}${row('ประเภทงาน',esc(it.type))}${row('ความสำคัญ',esc(priOf(it.priority).name))}${row('สถานะ',esc(statusOf(it.status).name)+(it.signed?' (เซ็นรับแล้ว '+fmtD(it.signedAt)+(it.signedBy?' โดย '+esc(it.signedBy):'')+')':''))}
       ${row('ผู้ขอ / ผู้ประสานงาน',esc(it.requester))}${row('สถานที่ / หน้างาน',esc(it.location))}${row('ผู้รับผิดชอบ',esc(it.assignee))}${row('ผู้รับเหมา',esc(it.contractor))}${row('ราคาประเมิน / งบ',esc(it.budget))}${row('เลขที่ PR / PO',esc(it.poRef))}
-      ${row('วันรับใบงาน',fmtD(it.received))}${row('วันเริ่มงาน',fmtD(it.start))}${row('กำหนดเสร็จ',fmtD(it.due))}${row('วันเสร็จจริง',fmtD(it.finished))}${row('ความคืบหน้า',(it.progress||0)+'%')}
+      ${row('วันรับใบงาน',fmtD(it.received))}${row('วันเริ่มงาน',fmtD(it.start))}${row('กำหนดเสร็จ',fmtD(it.due))}${row('วันเสร็จจริง',fmtD(it.finished))}${row('ความคืบหน้า',pctOf(it.status)+'%')}
       ${row('รายละเอียดงาน','<div class="pre">'+esc(it.detail)+'</div>')}
     </table>
     ${pics.length?`<h2>รูปหน้างาน (${pics.length})</h2><div class="pics">${pics.map(p=>`<figure><img src="${p.src}"><figcaption>${esc(p.name)}${p.ts?' · '+fmtDT(p.ts):''}</figcaption></figure>`).join('')}</div>`:''}
@@ -1131,7 +1133,7 @@ async function printItem(it){
 function exportCsv(){
   const arr=visibleItems();
   if(!arr.length){toast('ไม่มีรายการให้ส่งออก');return}
-  const cols=[['เลขที่','no'],['หัวข้องาน','title'],['แผนกที่ขอ','dept'],['ประเภทงาน','type'],['ความสำคัญ',it=>priOf(it.priority).name],['สถานะ',it=>statusOf(it.status).name+(it.signed?' (เซ็นรับแล้ว)':'')],['ผู้ขอ','requester'],['สถานที่','location'],['ผู้รับผิดชอบ','assignee'],['ผู้รับเหมา','contractor'],['ราคาประเมิน/งบ','budget'],['PR/PO','poRef'],['วันรับใบงาน','received'],['วันเริ่มงาน','start'],['กำหนดเสร็จ','due'],['วันเสร็จจริง','finished'],['คืบหน้า %','progress'],['วันเซ็นรับ','signedAt'],['เซ็นรับโดย','signedBy'],['แก้ไขล่าสุดโดย','updatedBy'],['รายละเอียด','detail'],['บันทึกล่าสุด',it=>{const l=(it.log||[]).slice().sort((a,b)=>b.ts-a.ts)[0];return l?fmtDT(l.ts)+' '+l.text:''}]];
+  const cols=[['เลขที่','no'],['หัวข้องาน','title'],['แผนกที่ขอ','dept'],['ประเภทงาน','type'],['ความสำคัญ',it=>priOf(it.priority).name],['สถานะ',it=>statusOf(it.status).name+(it.signed?' (เซ็นรับแล้ว)':'')],['ผู้ขอ','requester'],['สถานที่','location'],['ผู้รับผิดชอบ','assignee'],['ผู้รับเหมา','contractor'],['ราคาประเมิน/งบ','budget'],['PR/PO','poRef'],['วันรับใบงาน','received'],['วันเริ่มงาน','start'],['กำหนดเสร็จ','due'],['วันเสร็จจริง','finished'],['คืบหน้า %',it=>pctOf(it.status)],['วันเซ็นรับ','signedAt'],['เซ็นรับโดย','signedBy'],['แก้ไขล่าสุดโดย','updatedBy'],['รายละเอียด','detail'],['บันทึกล่าสุด',it=>{const l=(it.log||[]).slice().sort((a,b)=>b.ts-a.ts)[0];return l?fmtDT(l.ts)+' '+l.text:''}]];
   const cell=v=>{v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const lines=[cols.map(c=>cell(c[0])).join(',')].concat(arr.map(it=>cols.map(c=>cell(typeof c[1]==='function'?c[1](it):it[c[1]])).join(',')));
   const blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
@@ -1141,7 +1143,7 @@ function exportCsv(){
 
 /* ---------- หน้าต่าง: ใบงานใหม่ / บัญชี / ตั้งค่า ---------- */
 function showNewModal(){
-  const t=todayISO();
+  const t=todayISO();const sf=simpleForm();
   const optS=(list)=>list.map(x=>`<option>${esc(x)}</option>`).join('');
   $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box">
     <h2>ใบงานใหม่ · ${esc(WORKSPACES[ws].name)}</h2>
@@ -1150,15 +1152,15 @@ function showNewModal(){
       <div class="f"><label>ความสำคัญ</label><select id="nPri"><option value="p3">ปกติ</option><option value="p2">ด่วน</option><option value="p1">ด่วนมาก</option></select></div>
       <div class="f wide"><label>หัวข้องาน *</label><input id="nTitle" placeholder="เช่น ต่อเติมหลังคาทางเดินเชื่อมอาคาร 2"></div>
       <div class="f"><label>แผนกที่ขอ</label><input id="nDept" data-combo="depts" placeholder="พิมพ์รหัสหรือชื่อแผนก" autocomplete="off"></div>
-      <div class="f"><label>ประเภทงาน</label><select id="nType"><option value="">— เลือก —</option>${optS(settings.types)}</select></div>
+      <div class="f ${sf?'hidden':''}"><label>ประเภทงาน</label><select id="nType"><option value="">— เลือก —</option>${optS(settings.types)}</select></div>
       <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input id="nReq"></div>
       <div class="f"><label>สถานที่ / หน้างาน</label><input id="nLoc" list="siteList2"><datalist id="siteList2">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
-      <div class="f"><label>ผู้รับผิดชอบ</label><input id="nAssignee"></div>
+      <div class="f ${sf?'hidden':''}"><label>ผู้รับผิดชอบ</label><input id="nAssignee"></div>
       <div class="f"><label>สถานะเริ่มต้น</label><select id="nStatus">${STATUSES.filter(s=>!CLOSED.has(s.id)).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
       <div class="f"><label>วันรับใบงาน</label><input type="date" id="nRec" value="${t}"></div>
-      <div class="f"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
-      <div class="f"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
-      <div class="f wide"><label>รายละเอียดงาน</label><textarea id="nDetail" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
+      <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
+      <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
+      <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
     </div>
     <div class="err" id="nErr" style="color:var(--danger);font-size:13px;min-height:18px;margin-top:8px"></div>
     <div class="actions"><button class="btn" id="mCancel">ยกเลิก</button><button class="btn primary" id="mSave">สร้างใบงาน</button></div>
@@ -1173,7 +1175,7 @@ async function createItem(){
   const id=newId();
   const doc={id,no,autoNo:!no,title,dept:$('#nDept').value.trim(),type:$('#nType').value,priority:$('#nPri').value,status:$('#nStatus').value,
     requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value.trim(),contractor:'',budget:'',poRef:'',
-    received:$('#nRec').value,start:$('#nStart').value,due:$('#nDue').value,finished:'',progress:0,signed:false,signedAt:'',signedBy:'',
+    received:$('#nRec').value,start:$('#nStart').value,due:$('#nDue').value,finished:'',progress:pctOf($('#nStatus').value),signed:false,signedAt:'',signedBy:'',
     detail:$('#nDetail').value,createdAt:Date.now(),updatedAt:Date.now(),base:0};
   btn.disabled=true;btn.textContent='กำลังบันทึก…';err.textContent='';
   try{
@@ -1205,7 +1207,7 @@ function showUserModal(forced){
 }
 let usersCache=[];
 function userRows(){
-  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
+  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td style="text-align:center"><input type="checkbox" data-uf="simpleForm" ${u.simpleForm?'checked':''} title="ฟอร์มใบงานใหม่แบบย่อ (ซ่อนประเภทงาน/ผู้รับผิดชอบ/วันเริ่ม/กำหนดเสร็จ/รายละเอียด)"></td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
 }
 async function loadUsersInto(){
   try{usersCache=await gs('listUsers');const tb=$('#uBody');if(tb)tb.innerHTML=userRows()}catch(e){toast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ')}
@@ -1222,7 +1224,7 @@ function showSettingsModal(){
     <div class="actions"><button class="btn" id="mCancel">ปิด</button><button class="btn primary" id="sSave">บันทึกรายการ</button></div>
     <h2 style="margin-top:22px">ผู้ใช้และสิทธิ์</h2>
     <div class="readonly-note" style="margin-bottom:8px">ผู้ดูแลระบบ = ทำได้ทุกอย่าง รวมเซ็นรับงาน/ลบ/ตั้งค่า · เจ้าหน้าที่ = เพิ่ม/แก้ใบงานและบันทึกความคืบหน้า · ดูอย่างเดียว = เปิดดูเท่านั้น · ผู้ใช้ใหม่หรือถูกตั้งรหัสให้ จะถูกบังคับเปลี่ยนรหัสตอนเข้าครั้งแรก</div>
-    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="6" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
+    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th title="ฟอร์มใบงานใหม่แบบย่อ">ฟอร์มย่อ</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="7" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
     <h3 style="font-size:14px;margin:16px 0 6px">เพิ่มผู้ใช้ใหม่</h3>
     <div class="grid">
       <div class="f"><label>ชื่อผู้ใช้ (a-z, 0-9)</label><input id="nuUser" autocapitalize="off" spellcheck="false"></div>
@@ -1230,6 +1232,7 @@ function showSettingsModal(){
       <div class="f"><label>สิทธิ์</label><select id="nuRole"><option value="staff">เจ้าหน้าที่</option><option value="viewer">ดูอย่างเดียว</option><option value="admin">ผู้ดูแลระบบ</option></select></div>
       <div class="f"><label>อีเมล (ถ้าต้องการรับแจ้งเตือน)</label><input id="nuEmail" type="email"></div>
       <div class="f"><label>รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label><input id="nuPass" type="password" autocomplete="new-password"></div>
+      <div class="f"><label>ฟอร์มใบงานใหม่</label><select id="nuSimple"><option value="">เต็ม</option><option value="1">ย่อ (เฉพาะช่องจำเป็น)</option></select></div>
     </div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="nuAdd">เพิ่มผู้ใช้</button></div>
     <h2 style="margin-top:22px">ถังขยะ · ${esc(WORKSPACES[ws].name)}</h2>
@@ -1309,7 +1312,6 @@ drawer.addEventListener('input',e=>{
   const f=t.dataset.f;if(!f||!openId)return;
   if(t.type==='checkbox')return;
   let v=t.value;
-  if(f==='progress'){v=parseInt(v,10)||0;const pv=drawer.querySelector('.pv');if(pv)pv.textContent=v+'%';patch(openId,{progress:v},{debounce:true,silent:true});return}
   if(f==='status'||t.tagName==='SELECT')return;
   patch(openId,{[f]:v},{debounce:true,silent:true});
 });
@@ -1319,7 +1321,6 @@ drawer.addEventListener('change',e=>{
   const f=t.dataset.f;if(!f||!openId)return;
   if(f==='status'){setStatus(openId,t.value);return}
   if(f==='signed'){signItem(openId,t.checked);return}
-  if(f==='progress'){patch(openId,{progress:parseInt(t.value,10)||0});return}
   patch(openId,{[f]:t.value});
 });
 drawer.addEventListener('click',e=>{
@@ -1361,7 +1362,7 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.dataset.usave){
-    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),password:$('[data-uf="password"]',tr).value};
+    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,password:$('[data-uf="password"]',tr).value};
     t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
   }
@@ -1371,7 +1372,7 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.id==='nuAdd'){
-    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),password:$('#nuPass').value};
+    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),simpleForm:!!$('#nuSimple').value,password:$('#nuPass').value};
     if(!u.username||!u.password){toast('กรอกชื่อผู้ใช้และรหัสผ่าน');return}
     t.disabled=true;gs('upsertUser',u).then(()=>{toast('เพิ่มผู้ใช้ '+u.username+' แล้ว');['nuUser','nuDisplay','nuEmail','nuPass'].forEach(i=>$('#'+i).value='');t.disabled=false;loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
