@@ -238,6 +238,9 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 /* ---------- modal (new / settings) ---------- */
 .modal{position:fixed;inset:0;z-index:40;display:grid;place-items:center;padding:16px;background:rgba(10,20,30,.4)}
 .modal .box{background:var(--surface);border-radius:6px;width:min(620px,100%);max-height:100%;overflow-y:auto;box-shadow:var(--shadow);padding:20px}
+.modal .box.big{width:min(1150px,97vw);min-height:80vh;overflow:visible;font-size:15px}
+.modal .box.big .utable{font-size:14.5px}
+.modal .box.big .utable th,.modal .box.big .utable td{padding:9px 12px}
 .modal h2{margin:0 0 14px;font-size:17px;font-weight:600;color:var(--text)}
 .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .modal textarea.list{min-height:150px;font-size:13.5px}
@@ -980,14 +983,14 @@ function showExecStatsModal(){
   if(!years.includes(execPeriod.y))execPeriod.y=years[0];
   const TH=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
   const periodLabel=(execPeriod.m?TH[parseInt(execPeriod.m,10)-1]+' ':'ทั้งปี ')+(parseInt(execPeriod.y,10)+543);
-  $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box" style="width:min(760px,100%)">
+  $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box big">
     <h2>สรุปงานตามผู้ดำเนินการ · ${esc(WORKSPACES[ws].name)}</h2>
     <div class="readonly-note" style="margin-bottom:8px">นับจากใบงานทั้งหมด (งานปัจจุบัน + คลังที่เซ็นแล้ว) ${archiveLoadedAt?'':'· กำลังโหลดคลังงาน…'}</div>
     <div class="toolbar" style="margin-bottom:10px"><span>ช่วงรับเรื่อง:</span><div class="field"><select id="esYear">${years.map(y=>`<option value="${y}" ${y===execPeriod.y?'selected':''}>ปี ${parseInt(y,10)+543}</option>`).join('')}</select></div><div class="field"><select id="esMonth"><option value="">ทั้งปี</option>${TH.map((n,i)=>{const v=String(i+1).padStart(2,'0');return `<option value="${v}" ${v===execPeriod.m?'selected':''}>${n}</option>`}).join('')}</select></div>
       <div class="pickdd"><button class="btn sm" id="esPickBtn">ผู้ดำเนินการ: ${execPick?esc(execPick.size+' รายที่เลือก'):'ทั้งหมด'} ▾</button>
         <div class="pickmenu ${execPickOpen?'':'hidden'}" id="esPickMenu"><label><input type="checkbox" id="esAll" ${execPick?'':'checked'}> <b>ทั้งหมด</b></label>${allRows.map(r=>`<label><input type="checkbox" data-espick="${esc(r.k)}" ${execPick&&execPick.has(r.k)?'checked':''}> ${esc(r.name.replace('ผู้รับเหมา: ',''))}</label>`).join('')}</div>
       </div></div>
-    <div style="overflow-x:auto"><table class="utable" id="execStatsBody"><thead><tr><th>ผู้ดำเนินการ</th><th>ทั้งหมด</th><th>รับเรื่อง ${esc(periodLabel)}</th><th>กำลังทำ</th><th>เกินกำหนด</th><th>เสร็จ รอเซ็น</th><th>เซ็นรับแล้ว</th><th></th></tr></thead><tbody>
+    <div style="overflow:auto;max-height:calc(88vh - 200px)"><table class="utable" id="execStatsBody"><thead><tr><th>ผู้ดำเนินการ</th><th>ทั้งหมด</th><th>รับเรื่อง ${esc(periodLabel)}</th><th>กำลังทำ</th><th>เกินกำหนด</th><th>เสร็จ รอเซ็น</th><th>เซ็นรับแล้ว</th><th></th></tr></thead><tbody>
       ${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.st.total}</td><td>${r.st.month}</td><td>${r.st.open}</td><td class="${r.st.over?'pri p1':''}">${r.st.over}</td><td>${r.st.pending}</td><td>${r.st.signed}</td><td><button class="btn sm" data-execfilter="${esc(r.k)}">ดูรายการ</button></td></tr>`).join('')}
       ${none.total?`<tr><td class="readonly-note">ยังไม่ระบุผู้ดำเนินการ</td><td>${none.total}</td><td>${none.month}</td><td>${none.open}</td><td>${none.over}</td><td>${none.pending}</td><td>${none.signed}</td><td></td></tr>`:''}
     </tbody></table></div>
