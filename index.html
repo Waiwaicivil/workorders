@@ -941,10 +941,12 @@ function renderFilters(){
   renderExecStrip();
   $('#fStatus').value=filters.tile||filters.status;
 }
-function execStats(pred){
+const execPeriod={y:todayISO().slice(0,4),m:''};
+function inPeriod(it){const r=String(it.received||'');return r.startsWith(execPeriod.y)&&(!execPeriod.m||r.slice(5,7)===execPeriod.m)}
+function execStats(pred,usePeriod){
   const all=Object.values(items).concat(Object.values(archive)).filter(pred);
   const m=todayISO().slice(0,7);
-  return {total:all.length,month:all.filter(it=>String(it.received||'').startsWith(m)).length,open:all.filter(it=>!it.signed&&!CLOSED.has(it.status)).length,pending:all.filter(isPending).length,signed:all.filter(it=>it.signed).length,over:all.filter(isOverdue).length};
+  return {total:all.length,month:all.filter(it=>usePeriod?inPeriod(it):String(it.received||'').startsWith(m)).length,open:all.filter(it=>!it.signed&&!CLOSED.has(it.status)).length,pending:all.filter(isPending).length,signed:all.filter(it=>it.signed).length,over:all.filter(isOverdue).length};
 }
 function renderExecStrip(){
   let el=$('#execStrip');
@@ -964,12 +966,17 @@ function showExecStatsModal(){
   keys.set('in','ภายในแผนก');
   (settings.contractors||[]).forEach(n=>keys.set('c:'+n,'ผู้รับเหมา: '+n));
   all.forEach(it=>{const k=execKey(it);if(k&&!keys.has(k))keys.set(k,k==='in'?'ภายในแผนก':'ผู้รับเหมา: '+(it.contractor||'ไม่ระบุชื่อ'))});
-  const rows=Array.from(keys.entries()).map(([k,name])=>{const st=execStats(it=>execKey(it)===k);return {k,name,st}}).filter(r=>r.st.total||r.k==='in');
-  const none=execStats(it=>!it.assignee);
+  const rows=Array.from(keys.entries()).map(([k,name])=>{const st=execStats(it=>execKey(it)===k,true);return {k,name,st}}).filter(r=>r.st.total||r.k==='in');
+  const none=execStats(it=>!it.assignee,true);
+  const years=Array.from(new Set(all.map(it=>String(it.received||'').slice(0,4)).filter(y=>/^\d{4}$/.test(y)).concat([todayISO().slice(0,4)]))).sort().reverse();
+  if(!years.includes(execPeriod.y))execPeriod.y=years[0];
+  const TH=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+  const periodLabel=(execPeriod.m?TH[parseInt(execPeriod.m,10)-1]+' ':'ทั้งปี ')+(parseInt(execPeriod.y,10)+543);
   $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box" style="width:min(760px,100%)">
     <h2>สรุปงานตามผู้ดำเนินการ · ${esc(WORKSPACES[ws].name)}</h2>
-    <div class="readonly-note" style="margin-bottom:8px">นับจากใบงานทั้งหมด (งานปัจจุบัน + คลังที่เซ็นแล้ว) · "รับเรื่องเดือนนี้" = วันรับใบงานอยู่ในเดือนปัจจุบัน ${archiveLoadedAt?'':'· กำลังโหลดคลังงาน…'}</div>
-    <div style="overflow-x:auto"><table class="utable" id="execStatsBody"><thead><tr><th>ผู้ดำเนินการ</th><th>ทั้งหมด</th><th>รับเรื่องเดือนนี้</th><th>กำลังทำ</th><th>เกินกำหนด</th><th>เสร็จ รอเซ็น</th><th>เซ็นรับแล้ว</th><th></th></tr></thead><tbody>
+    <div class="readonly-note" style="margin-bottom:8px">นับจากใบงานทั้งหมด (งานปัจจุบัน + คลังที่เซ็นแล้ว) ${archiveLoadedAt?'':'· กำลังโหลดคลังงาน…'}</div>
+    <div class="toolbar" style="margin-bottom:10px"><span>ช่วงรับเรื่อง:</span><div class="field"><select id="esYear">${years.map(y=>`<option value="${y}" ${y===execPeriod.y?'selected':''}>ปี ${parseInt(y,10)+543}</option>`).join('')}</select></div><div class="field"><select id="esMonth"><option value="">ทั้งปี</option>${TH.map((n,i)=>{const v=String(i+1).padStart(2,'0');return `<option value="${v}" ${v===execPeriod.m?'selected':''}>${n}</option>`}).join('')}</select></div></div>
+    <div style="overflow-x:auto"><table class="utable" id="execStatsBody"><thead><tr><th>ผู้ดำเนินการ</th><th>ทั้งหมด</th><th>รับเรื่อง ${esc(periodLabel)}</th><th>กำลังทำ</th><th>เกินกำหนด</th><th>เสร็จ รอเซ็น</th><th>เซ็นรับแล้ว</th><th></th></tr></thead><tbody>
       ${rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${r.st.total}</td><td>${r.st.month}</td><td>${r.st.open}</td><td class="${r.st.over?'pri p1':''}">${r.st.over}</td><td>${r.st.pending}</td><td>${r.st.signed}</td><td><button class="btn sm" data-execfilter="${esc(r.k)}">ดูรายการ</button></td></tr>`).join('')}
       ${none.total?`<tr><td class="readonly-note">ยังไม่ระบุผู้ดำเนินการ</td><td>${none.total}</td><td>${none.month}</td><td>${none.open}</td><td>${none.over}</td><td>${none.pending}</td><td>${none.signed}</td><td></td></tr>`:''}
     </tbody></table></div>
@@ -1405,6 +1412,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('#modal'))clos
 
 $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='nAssignee'){$('#nContractorWrap').classList.toggle('hidden',e.target.value!=='ผู้รับเหมา');return}
+  if(e.target.id==='esYear'||e.target.id==='esMonth'){execPeriod.y=$('#esYear').value;execPeriod.m=$('#esMonth').value;showExecStatsModal();return}
   const cb=e.target;if(!cb||cb.dataset.uf!=='simpleForm')return;
   const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
 });
