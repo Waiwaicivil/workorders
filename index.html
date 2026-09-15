@@ -938,14 +938,20 @@ async function uploadFileUI(id,file){
   if(gen!==wsGen||!findItem(id))return;
   if(file.size>15*1024*1024){toast('ไฟล์ใหญ่เกิน 15 MB');return}
   uploading[id]={name:file.name+' ('+Math.round(file.size/1024)+' KB)',img:/^image\//i.test(file.type)};renderDrawer();
-  const rd=new FileReader();
-  rd.onload=()=>{
-    const b64=String(rd.result).split(',')[1];
-    if(gen!==wsGen){delete uploading[id];return}
-    gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true)}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawerBg()});
-  };
-  rd.onerror=()=>{delete uploading[id];toast('อ่านไฟล์ไม่ได้');renderDrawer()};
-  rd.readAsDataURL(file);
+  // คืน promise ที่จบเมื่ออัปโหลดเสร็จ/ล้ม เพื่อให้ส่งหลายไฟล์ต่อกันทีละไฟล์ได้
+  return new Promise(done=>{
+    const rd=new FileReader();
+    rd.onload=()=>{
+      const b64=String(rd.result).split(',')[1];
+      if(gen!==wsGen){delete uploading[id];return done()}
+      gs('uploadFile',id,file.name,file.type||'application/octet-stream',b64).then(r=>{const cur=findItem(id);if(cur){cur.files=r.files}toast('แนบไฟล์แล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true)}).catch(e=>toast('อัปโหลดไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)).then(()=>{delete uploading[id];renderDrawerBg();done()});
+    };
+    rd.onerror=()=>{delete uploading[id];toast('อ่านไฟล์ไม่ได้');renderDrawer();done()};
+    rd.readAsDataURL(file);
+  });
+}
+async function uploadFilesUI(id,files){
+  for(const f of Array.from(files||[])){if(!findItem(id))return;await uploadFileUI(id,f)}
 }
 const fileCache={};
 // เก็บไฟล์ที่ดึงมาไว้ไม่เกิน 40 ไฟล์ และคืนหน่วยความจำรูปเมื่อสลับแผนก/ออกจากระบบ
@@ -1455,6 +1461,10 @@ function showNewModal(){
       <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
       <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
       <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
+      <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input id="nPoRef" placeholder="เช่น PR-2569-0123"></div>
+      <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input id="nBudget" placeholder="เช่น 45,000" inputmode="decimal"></div>
+      <div class="f"><label>รูปหน้างาน</label><label class="btn sm" style="display:inline-flex">📷 ถ่ายรูป / เลือกรูป<input type="file" id="nImgs" accept="image/*" multiple style="display:none"></label><span class="readonly-note" id="nImgsNote">ยังไม่ได้เลือก</span></div>
+      <div class="f"><label>ไฟล์แนบอื่น ๆ</label><label class="btn sm" style="display:inline-flex">📎 แนบไฟล์<input type="file" id="nFiles" accept="application/pdf,.dwg,.dxf,.xlsx,.xls,.docx,.doc,.zip,.csv,.txt" multiple style="display:none"></label><span class="readonly-note" id="nFilesNote">ยังไม่ได้เลือก (ไม่เกิน 15 MB ต่อไฟล์)</span></div>
     </div>
     <div class="err" id="nErr" style="color:var(--danger);font-size:13px;min-height:18px;margin-top:8px"></div>
     <div class="actions"><button class="btn" id="mCancel">ยกเลิก</button><button class="btn primary" id="mSave">สร้างใบงาน</button></div>
@@ -1468,7 +1478,7 @@ async function createItem(){
   const no=$('#nNo').value.trim();
   const id=newItemId||(newItemId=newId());
   const doc={id,no,autoNo:!no,title,dept:$('#nDept').value.trim(),type:$('#nType').value,priority:$('#nPri').value,status:$('#nStatus').value,
-    requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value,contractor:$('#nAssignee').value==='ผู้รับเหมา'?$('#nContractor').value.trim():'',budget:'',poRef:'',
+    requester:$('#nReq').value.trim(),location:$('#nLoc').value.trim(),assignee:$('#nAssignee').value,contractor:$('#nAssignee').value==='ผู้รับเหมา'?$('#nContractor').value.trim():'',budget:$('#nBudget').value.trim(),poRef:$('#nPoRef').value.trim(),
     received:$('#nRec').value,start:$('#nStart').value,due:$('#nDue').value,finished:'',progress:pctOf($('#nStatus').value),signed:false,signedAt:'',signedBy:'',
     detail:$('#nDetail').value,createdAt:Date.now(),updatedAt:Date.now(),base:0};
   btn.disabled=true;btn.textContent='กำลังบันทึก…';err.textContent='';
@@ -1477,9 +1487,12 @@ async function createItem(){
     delete doc.autoNo;delete doc.base;
     doc.no=r.no;doc.updatedAt=r.updatedAt;doc.updatedBy=r.updatedBy;doc.files=[];doc.log=[];
     items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;serverSnap[id]=clone(doc);newItemId=null;
+    // รูป/ไฟล์ต้องมีใบงานในชีทก่อน จึงส่งหลังสร้างเสร็จ และเปิดใบงานให้เห็นความคืบหน้าการอัปโหลด
+    const ups=Array.from($('#nImgs').files||[]).concat(Array.from($('#nFiles').files||[]));
     closeModal();filters.tile='';render();
     toast('สร้างใบงาน '+doc.no+' แล้ว');
     addLogEntry(id,'รับใบงาน',doc.status);
+    if(ups.length){openItem(id);uploadFilesUI(id,ups)}
   }catch(e){
     err.textContent=cleanMsg(errMsg(e))||'บันทึกไม่สำเร็จ ลองอีกครั้ง';
     btn.disabled=false;btn.textContent='สร้างใบงาน';
@@ -1632,7 +1645,7 @@ drawer.addEventListener('input',e=>{
 });
 drawer.addEventListener('change',e=>{
   const t=e.target;
-  if(t.id==='fileInput'||t.id==='imgInput'){if(t.files&&t.files[0])uploadFileUI(openId,t.files[0]);t.value='';return}
+  if(t.id==='fileInput'||t.id==='imgInput'){if(t.files&&t.files.length)uploadFilesUI(openId,Array.from(t.files));t.value='';return}
   const f=t.dataset.f;if(!f||!openId)return;
   if(f==='status'){setStatus(openId,t.value);return}
   if(f==='signed'){signItem(openId,t.checked);return}
@@ -1676,6 +1689,7 @@ $('#modalHost').addEventListener('mousedown',e=>{modalPress=e.target});
 $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='dsBasis'||e.target.id==='dsYear'||e.target.id==='dsMonth'){deptStat.basis=$('#dsBasis').value;deptStat.y=$('#dsYear').value;deptStat.m=deptStat.y?$('#dsMonth').value:'';showDeptStatsModal();return}
   if(e.target.id==='nAssignee'){$('#nContractorWrap').classList.toggle('hidden',e.target.value!=='ผู้รับเหมา');return}
+  if(e.target.id==='nImgs'||e.target.id==='nFiles'){const fs=Array.from(e.target.files||[]);$('#'+e.target.id+'Note').textContent=fs.length?fs.length+' ไฟล์: '+fs.map(f=>f.name).join(', '):'ยังไม่ได้เลือก';return}
   if(e.target.id==='esYear'||e.target.id==='esMonth'){execPeriod.y=$('#esYear').value;execPeriod.m=$('#esMonth').value;showExecStatsModal();return}
   if(e.target.id==='esAll'){execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
   if(e.target.dataset.espick!==undefined){const k=e.target.dataset.espick;if(!execPick)execPick=new Set();if(e.target.checked)execPick.add(k);else execPick.delete(k);if(!execPick.size)execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
