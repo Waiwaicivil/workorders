@@ -468,6 +468,10 @@ const STATUSES=C.STATUSES, PRIORITIES=C.PRIORITIES, ROLE_NAME=C.ROLE_NAME, DEFAU
 const CLOSED=new Set(['done','cancel']);
 const SESSION_KEY='wo-civil-session';
 const WS_FUNCS=new Set(['getAll','saveItem','deleteItem','deleteExamples','addLog','deleteLog','uploadFile','deleteFile','getFile','getTrash','restoreItem','purgeItem','getHistory']);
+// ความยาวสูงสุดต่อช่อง ต้องตรงกับ TEXT_MAX ใน Code.gs (server ปฏิเสธถ้าเกิน ไม่ตัดทิ้ง)
+const MAX={no:40,title:300,dept:120,type:120,requester:200,location:300,detail:5000,contractor:200,budget:60,poRef:60,log:2000};
+// ส่งไฟล์ใหญ่ใช้เวลานานกว่าคำสั่งอื่น ถ้าตัดที่ 90 วิ server ยังแนบต่อจนเสร็จ → ผู้ใช้ส่งซ้ำได้ไฟล์ซ้ำ
+const TIMEOUT_MS={uploadFile:300000};
 
 /* ---------- state ---------- */
 let items={};            // ใบงานที่ยังไม่เซ็นรับ (พื้นที่งานปัจจุบัน)
@@ -486,7 +490,7 @@ let digest={enabled:false,hour:8};
 // การบันทึก
 const dirty={}, base={}, saveState={}, saving={}, saveAgain={}, writeTimers={}, logDraft={}, inflight={}, ackAt={}; // ackAt = เวลาบนเซิร์ฟเวอร์ของการบันทึกล่าสุดที่เครื่องนี้ได้รับยืนยัน
 let wsGen=0, lastReadTime=0; // wsGen เพิ่มทุกครั้งที่สลับแผนก ผลที่ตอบกลับของแผนกเดิมจะถูกทิ้ง
-let refreshing=false, refreshStartedAt=0, refreshPromise=null;
+let refreshing=false, refreshStartedAt=0, refreshPromise=null, lastLoadError='';
 let drawerStale=false, ptrDown=false, pendingLogs=0, newItemId=null;
 // เวอร์ชันข้อมูลที่ถืออยู่ (ส่งไปเช็คตอนรีเฟรชอัตโนมัติ) และประวัติการแก้ไขที่เปิดดูแล้ว
 const dataVer={active:'',archive:''}, fullAt={active:0,archive:0}, histCache={};
@@ -561,14 +565,15 @@ function gs(fn){
   const args=Array.prototype.slice.call(arguments,1);
   return new Promise((res,rej)=>{
     let done=false;
-    const timer=setTimeout(()=>{if(!done){done=true;rej(new Error('TIMEOUT:เซิร์ฟเวอร์ไม่ตอบสนอง'))}},90000);
+    const tmo=TIMEOUT_MS[fn]||90000;
+    const timer=setTimeout(()=>{if(!done){done=true;rej(new Error('TIMEOUT:เซิร์ฟเวอร์ไม่ตอบสนอง'))}},tmo);
     const full=fn==='login'?args:[session?session.token:''].concat(WS_FUNCS.has(fn)?[ws]:[],args);
     const fail=e=>{if(done)return;done=true;clearTimeout(timer);const m=errMsg(e);if(m.indexOf('AUTH:')>=0){clearSession();showLogin(cleanMsg(m)+(hasUnsaved()?' · งานที่ยังไม่บันทึกเก็บไว้ในเครื่องแล้ว ล็อกอินใหม่เพื่อบันทึกต่อ':''))}rej(e)};
     const okay=r=>{if(done)return;done=true;clearTimeout(timer);res(r)};
     try{
       if(window.API_URL){
         // โหมดโฮสต์นอก Google: เรียก JSON API ของ Apps Script โดยไม่ส่งคุกกี้
-        const ctrl=new AbortController();const t2=setTimeout(()=>ctrl.abort(),90000);
+        const ctrl=new AbortController();const t2=setTimeout(()=>ctrl.abort(),tmo);
         fetch(window.API_URL,{method:'POST',body:JSON.stringify({fn,args:full}),redirect:'follow',signal:ctrl.signal})
           .then(r=>r.json()).then(j=>{clearTimeout(t2);if(j&&j.ok)okay(j.result);else fail(new Error(j&&j.error||'เซิร์ฟเวอร์ตอบผิดพลาด'))})
           .catch(e=>{clearTimeout(t2);fail(new Error(e&&e.name==='AbortError'?'TIMEOUT:เซิร์ฟเวอร์ไม่ตอบสนอง':'NET:เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ('+errMsg(e)+')'))});
@@ -692,15 +697,17 @@ async function refreshRun(silent,gen,poll){
   }catch(e){
     if(gen!==wsGen)return;
     console.warn('refresh failed',e);
+    lastLoadError=cleanMsg(errMsg(e));
     setSync(false,'เชื่อมต่อชีทไม่ได้');
     if(!silent){mode='error';render()}
   }finally{if(gen===wsGen){refreshing=false;refreshPromise=null}}
 }
-let archiveLoading=false, archivePromise=null;
+let archiveLoading=false, archivePromise=null, archiveFailAt=0;
 function loadArchive(force,opts){
   if(!session)return Promise.resolve();
   if(archiveLoading&&archivePromise)return archivePromise; // คืนงานที่กำลังโหลดอยู่ ไม่ใช่ promise ที่เสร็จแล้ว (กันวนไม่รู้จบ)
   if(!force&&Date.now()-archiveLoadedAt<60000)return Promise.resolve();
+  if(!force&&Date.now()-archiveFailAt<30000)return Promise.resolve(); // เพิ่งโหลดล้ม ไม่ยิงซ้ำทุกครั้งที่พิมพ์ในตัวกรอง
   archivePromise=loadArchiveRun(wsGen,!force&&!!(opts&&opts.poll));return archivePromise;
 }
 async function loadArchiveRun(gen,poll){
@@ -713,7 +720,7 @@ async function loadArchiveRun(gen,poll){
     if(r.unchanged)return;
     applyServer(r.items,'archive',r.serverTime||Date.now());dataVer.archive=r.ver||'';fullAt.archive=Date.now();
     if(page==='archive'){mode='sheet';renderBg()}else{renderFilters()}
-  }catch(e){if(gen!==wsGen)return;console.warn(e);if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ')}}
+  }catch(e){if(gen!==wsGen)return;console.warn(e);archiveFailAt=Date.now();if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)}}
   finally{if(gen===wsGen){archiveLoading=false;archivePromise=null}}
 }
 function initStore(){
@@ -778,9 +785,11 @@ async function saveNow(id,attempt){
       saving[id]=false;
       toast('มีคนแก้ใบงานนี้ก่อนหน้า กำลังรวมข้อมูล…',true);
       // โหลดทั้งงานปัจจุบันและคลัง (ใบอาจถูกเซ็นรับ/ยกเลิกเซ็นจากเครื่องอื่น)
+      const before=serverSnap[id]||{}; // สำเนาจากชีทที่เครื่องนี้เคยเห็น ใช้แยกว่า "อีกฝ่ายแก้ช่องไหน" ไม่ใช่ "เราแก้ช่องไหน"
       await Promise.all([refresh(true),loadArchive(true)]);
       const snap=serverSnap[id];
-      if(snap){const clash=Object.keys(dirty[id]||{}).filter(f=>f!=='updatedAt'&&String(snap[f]==null?'':snap[f])!==String(dirty[id][f]==null?'':dirty[id][f])&&String(snap[f]==null?'':snap[f])!==String(sent[f]==null?'':sent[f]));
+      if(snap){const S=v=>String(v==null?'':v);
+        const clash=Object.keys(dirty[id]||{}).filter(f=>f!=='updatedAt'&&S(snap[f])!==S(before[f])&&S(snap[f])!==S(dirty[id][f]));
         if(clash.length)toast('ช่อง '+clash.map(f=>FIELD_TH[f]||f).join(', ')+' ถูก '+(snap.updatedBy||'ผู้ใช้อื่น')+' แก้ไปพร้อมกัน ระบบใช้ค่าที่คุณพิมพ์ กรุณาตรวจอีกครั้ง',true);
         // ตั้งฐานใหม่เป็นสำเนาล่าสุดจากชีท แล้ววางเฉพาะช่องที่เราแก้ทับ
         const loc=findItem(id);
@@ -1214,7 +1223,10 @@ function renderMain(){
   $('#count').textContent=arr.length+' รายการ';
   const main=$('#main');
   if(mode==='connecting'||(page==='archive'&&!archiveLoadedAt&&archiveLoading)){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดใบงาน…</div></div>';return}
-  if(mode==='error'){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ดึงข้อมูลจากชีทไม่ได้</b>ตรวจอินเทอร์เน็ต แล้วกดลองใหม่<br><br><button class="btn primary" id="btnRetry">ลองใหม่</button></div></div>';return}
+  if(mode==='error'){
+    // ข้อความจาก server (เช่น หัวคอลัมน์ในชีทไม่ตรง) ต้องให้ผู้ใช้เห็น ไม่ใช่โทษอินเทอร์เน็ตอย่างเดียว
+    const net=/^(NET|TIMEOUT):|เชื่อมต่อเซิร์ฟเวอร์ไม่ได้|ไม่ตอบสนอง/.test(lastLoadError)||!lastLoadError;
+    main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ดึงข้อมูลจากชีทไม่ได้</b>${net?'ตรวจอินเทอร์เน็ต แล้วกดลองใหม่':'เซิร์ฟเวอร์แจ้งว่า:'}${lastLoadError?`<div class="note" style="margin:10px auto;max-width:640px;text-align:left;white-space:pre-wrap">${esc(lastLoadError)}</div>`:'<br><br>'}<button class="btn primary" id="btnRetry">ลองใหม่</button></div></div>`;return}
   if(page==='archive'){renderArchive(main,arr);return}
   if(view==='board'){renderBoard(main,arr);return}
   if(!arr.length){main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ไม่มีใบงานในมุมมองนี้</b>ลองเปลี่ยนตัวกรอง${canEdit()?' หรือกด “ใบงานใหม่” เพื่อเพิ่ม':''}</div></div>`;return}
@@ -1244,7 +1256,7 @@ function renderMain(){
 }
 function renderArchive(main,arr){
   if(!archiveLoadedAt&&!Object.keys(archive).length){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดคลังงาน…</div></div>';return}
-  if(!arr.length){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ยังไม่มีงานที่เซ็นรับในมุมมองนี้</b>เมื่อผู้ดูแลระบบติ๊ก “เซ็นรับงานแล้ว” ในใบงาน งานจะย้ายมาที่นี่</div></div>';return}
+  if(!arr.length){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ยังไม่มีงานที่เซ็นรับในมุมมองนี้</b>เมื่อผู้มีสิทธิ์เซ็นรับงานติ๊ก “เซ็นรับงานแล้ว” ในใบงาน งานจะย้ายมาที่นี่</div></div>';return}
   const rows=arr.map(it=>{const d=daysBetween(it.received,it.signedAt);return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}</td>
       <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||'')}</div></td>
@@ -1314,13 +1326,13 @@ function renderDrawer(){
   dr.innerHTML=`
     <div class="dhead" ${ro?'data-ro':''}>
       <div class="line1">
-        <input class="no" data-f="no" value="${esc(it.no||'')}" placeholder="เลขที่ใบงาน" spellcheck="false" ${dis}>
+        <input class="no" data-f="no" maxlength="${MAX.no}" value="${esc(it.no||'')}" placeholder="เลขที่ใบงาน" spellcheck="false" ${dis}>
         ${it.example?'<span class="chip outline">ตัวอย่าง</span>':''}
         <span style="flex:1"></span>
         <button class="btn sm ghost" id="dPrint" title="พิมพ์ใบงานพร้อมช่องเซ็นรับ">🖨 พิมพ์</button>
         <button class="btn icon ghost" id="dClose" aria-label="ปิด">✕</button>
       </div>
-      <input class="title" data-f="title" value="${esc(it.title||'')}" placeholder="หัวข้องาน" ${dis}>
+      <input class="title" data-f="title" maxlength="${MAX.title}" value="${esc(it.title||'')}" placeholder="หัวข้องาน" ${dis}>
       <div class="line3">
         <select class="status" data-f="status" ${dis||(it.signed?'disabled title="เซ็นรับแล้ว เปลี่ยนสถานะไม่ได้ ต้องยกเลิกเซ็นรับก่อน"':'')}>${opt(STATUSES,it.status,'name')}</select>
         ${it.status!=='done'&&!ro&&!it.signed?'<button class="btn sm" id="dDone">✓ ทำเสร็จแล้ว</button>':''}
@@ -1331,13 +1343,13 @@ function renderDrawer(){
     <div class="dbody" ${ro?'data-ro':''}>
       <div class="sect"><h3>ข้อมูลใบงาน</h3>
         <div class="grid">
-          <div class="f"><label>แผนกที่ขอ</label><input data-f="dept" data-combo="depts" value="${esc(it.dept||'')}" placeholder="พิมพ์รหัสหรือชื่อแผนก" autocomplete="off" ${dis}></div>
+          <div class="f"><label>แผนกที่ขอ</label><input data-f="dept" data-combo="depts" maxlength="${MAX.dept}" value="${esc(it.dept||'')}" placeholder="พิมพ์รหัสหรือชื่อแผนก" autocomplete="off" ${dis}></div>
           <div class="f"><label>ประเภทงาน</label><select data-f="type" ${dis}><option value="">— เลือก —</option>${opt(typeList,it.type)}</select></div>
           <div class="f"><label>ความสำคัญ</label><select data-f="priority" ${dis}>${opt(PRIORITIES,it.priority||'p3','name')}</select></div>
-          <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input data-f="requester" value="${esc(it.requester||'')}" placeholder="ชื่อ, ตำแหน่ง, เบอร์" ${dis}></div>
-          <div class="f wide"><label>สถานที่ / หน้างาน</label><input data-f="location" list="siteList" value="${esc(it.location||'')}" placeholder="เช่น โรงงาน 2 · บ่อแป้ง" ${dis}><datalist id="siteList">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
+          <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input data-f="requester" maxlength="${MAX.requester}" value="${esc(it.requester||'')}" placeholder="ชื่อ, ตำแหน่ง, เบอร์" ${dis}></div>
+          <div class="f wide"><label>สถานที่ / หน้างาน</label><input data-f="location" list="siteList" maxlength="${MAX.location}" value="${esc(it.location||'')}" placeholder="เช่น โรงงาน 2 · บ่อแป้ง" ${dis}><datalist id="siteList">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
           <div class="f"><label>ผู้ดำเนินการ</label><select data-f="assignee" ${dis}><option value="">— เลือก —</option><option value="ภายในแผนก" ${it.assignee==='ภายในแผนก'?'selected':''}>ภายในแผนก</option><option value="ผู้รับเหมา" ${it.assignee==='ผู้รับเหมา'?'selected':''}>ผู้รับเหมา</option></select></div>
-          <div class="f ${it.assignee==='ผู้รับเหมา'?'':'hidden'}"><label>ชื่อผู้รับเหมา</label><input data-f="contractor" data-combo="contractors" value="${esc(it.contractor||'')}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off" ${dis}></div>
+          <div class="f ${it.assignee==='ผู้รับเหมา'?'':'hidden'}"><label>ชื่อผู้รับเหมา</label><input data-f="contractor" data-combo="contractors" maxlength="${MAX.contractor}" value="${esc(it.contractor||'')}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off" ${dis}></div>
           <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input data-f="budget" value="${esc(it.budget||'')}" placeholder="เช่น 45,000" inputmode="decimal" maxlength="60" ${dis}></div>
           <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input data-f="poRef" value="${esc(it.poRef||'')}" placeholder="เช่น PR-2569-0123" maxlength="60" ${dis}></div>
         </div>
@@ -1352,8 +1364,8 @@ function renderDrawer(){
         </div>
         ${isOverdue(it)?`<div class="note" style="margin-top:10px;background:var(--s-red-bg);color:var(--s-red-fg)">เกินกำหนดมา ${Math.abs(daysUntil(it.due))} วัน</div>`:isSoon(it)?`<div class="note" style="margin-top:10px;background:var(--s-amber-bg);color:var(--s-amber-fg)">${daysUntil(it.due)===0?'ครบกำหนดวันนี้':'เหลืออีก '+daysUntil(it.due)+' วัน'}</div>`:''}
       </div>
-      <div class="sect"><h3>รายละเอียดงาน</h3>
-        <div class="grid"><div class="f wide"><textarea data-f="detail" placeholder="ขอบเขตงาน สเปก ขนาด ข้อควรระวัง เลขแบบ ลิงก์ไฟล์ ฯลฯ" ${dis}>${esc(it.detail||'')}</textarea></div></div>
+      <div class="sect"><h3>รายละเอียดงาน <span class="readonly-note" style="font-weight:400">(ไม่เกิน ${MAX.detail.toLocaleString()} ตัวอักษร)</span></h3>
+        <div class="grid"><div class="f wide"><textarea data-f="detail" maxlength="${MAX.detail}" placeholder="ขอบเขตงาน สเปก ขนาด ข้อควรระวัง เลขแบบ ลิงก์ไฟล์ ฯลฯ" ${dis}>${esc(it.detail||'')}</textarea></div></div>
         ${links.length?`<div class="linklist">ลิงก์ในรายละเอียด: ${links.map(u=>`<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(u.length>60?u.slice(0,57)+'…':u)}</a>`).join(' · ')}</div>`:''}
       </div>
       <div class="sect"><h3>รูปหน้างาน</h3>
@@ -1366,7 +1378,7 @@ function renderDrawer(){
       </div>
       <div class="sect"><h3>บันทึกความคืบหน้า</h3>
         ${ro?'<div class="readonly-note">สิทธิ์ของคุณเพิ่มบันทึกไม่ได้</div>':`<div class="logform">
-          <textarea id="logText" placeholder="วันนี้ทำอะไรไปถึงไหน / ติดปัญหาอะไร / รออะไรอยู่">${esc(logDraft[it.id]||'')}</textarea>
+          <textarea id="logText" maxlength="${MAX.log}" placeholder="วันนี้ทำอะไรไปถึงไหน / ติดปัญหาอะไร / รออะไรอยู่">${esc(logDraft[it.id]||'')}</textarea>
           <div class="r"><span class="hint">บันทึกจะติดวันเวลา ชื่อผู้บันทึก และสถานะ ณ ตอนนั้นให้อัตโนมัติ (Ctrl/⌘+Enter เพื่อบันทึก)</span><button class="btn primary sm" id="logAdd">บันทึก</button></div>
         </div>`}
         <ul class="log">${logs.length?logs.map(l=>{const mine=l.u?(!!session&&String(l.u).toLowerCase()===String(session.user.username).toLowerCase()):(!!l.by&&l.by===me());const canDel=!ro&&(isAdmin()||mine)&&!l.pending;return `<li data-ts="${esc(l.ts)}"><span class="dot"></span><div><div class="when"><span class="mono">${fmtDT(l.ts)}</span>${l.by?`<span class="by">${esc(l.by)}</span>`:''}${l.status?chipStatus(l.status):''}${l.pending?'<span class="readonly-note">กำลังบันทึก…</span>':''}${canDel?`<button class="del" data-del="${esc(l.ts)}" title="ลบบันทึกนี้">ลบ</button>`:''}</div><div class="txt">${linkify(l.text)}</div></div></li>`}).join(''):'<li style="grid-template-columns:1fr"><span style="color:var(--faint);font-size:12.5px">ยังไม่มีบันทึก</span></li>'}</ul>
@@ -1456,20 +1468,20 @@ function showNewModal(){
   $('#modalHost').innerHTML=`<div class="modal" id="modal"><div class="box">
     <h2>ใบงานใหม่ · ${esc(WORKSPACES[ws].name)}</h2>
     <div class="grid">
-      <div class="f"><label>เลขที่ใบงาน</label><input class="mono" id="nNo" placeholder="เว้นว่าง = ระบบออกเลขให้ (${esc(WORKSPACES[ws].noPrefix||WORKSPACES[ws].prefix)}${String(beYear()).slice(-2)}/${todayISO().slice(5,7)}/…)"></div>
+      <div class="f"><label>เลขที่ใบงาน</label><input class="mono" id="nNo" maxlength="${MAX.no}" placeholder="เว้นว่าง = ระบบออกเลขให้ (${esc(WORKSPACES[ws].noPrefix||WORKSPACES[ws].prefix)}${String(beYear()).slice(-2)}/${todayISO().slice(5,7)}/…)"></div>
       <div class="f"><label>ความสำคัญ</label><select id="nPri"><option value="p3">ปกติ</option><option value="p2">ด่วน</option><option value="p1">ด่วนมาก</option></select></div>
-      <div class="f wide"><label>หัวข้องาน *</label><input id="nTitle" placeholder="เช่น ต่อเติมหลังคาทางเดินเชื่อมอาคาร 2"></div>
-      <div class="f"><label>แผนกที่ขอ</label><input id="nDept" data-combo="depts" placeholder="พิมพ์รหัสหรือชื่อแผนก" autocomplete="off"></div>
+      <div class="f wide"><label>หัวข้องาน *</label><input id="nTitle" maxlength="${MAX.title}" placeholder="เช่น ต่อเติมหลังคาทางเดินเชื่อมอาคาร 2"></div>
+      <div class="f"><label>แผนกที่ขอ</label><input id="nDept" data-combo="depts" maxlength="${MAX.dept}" placeholder="พิมพ์รหัสหรือชื่อแผนก" autocomplete="off"></div>
       <div class="f ${sf?'hidden':''}"><label>ประเภทงาน</label><select id="nType"><option value="">— เลือก —</option>${optS(settings.types)}</select></div>
-      <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input id="nReq"></div>
-      <div class="f"><label>สถานที่ / หน้างาน</label><input id="nLoc" list="siteList2"><datalist id="siteList2">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
+      <div class="f"><label>ผู้ขอ / ผู้ประสานงาน</label><input id="nReq" maxlength="${MAX.requester}"></div>
+      <div class="f"><label>สถานที่ / หน้างาน</label><input id="nLoc" list="siteList2" maxlength="${MAX.location}"><datalist id="siteList2">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
       <div class="f ${sf?'hidden':''}"><label>ผู้ดำเนินการ</label><select id="nAssignee"><option value="">— เลือก —</option><option value="ภายในแผนก">ภายในแผนก</option><option value="ผู้รับเหมา">ผู้รับเหมา</option></select></div>
-      <div class="f hidden" id="nContractorWrap"><label>ชื่อผู้รับเหมา</label><input id="nContractor" data-combo="contractors" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off"></div>
+      <div class="f hidden" id="nContractorWrap"><label>ชื่อผู้รับเหมา</label><input id="nContractor" data-combo="contractors" maxlength="${MAX.contractor}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off"></div>
       <div class="f"><label>สถานะเริ่มต้น</label><select id="nStatus">${STATUSES.filter(s=>!CLOSED.has(s.id)).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
       <div class="f"><label>วันรับใบงาน</label><input type="date" id="nRec" value="${t}"></div>
       <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
       <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
-      <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
+      <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" maxlength="${MAX.detail}" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
       <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input id="nPoRef" placeholder="เช่น PR-2569-0123" maxlength="60"></div>
       <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input id="nBudget" placeholder="เช่น 45,000" inputmode="decimal" maxlength="60"></div>
       <div class="f"><label>รูปหน้างาน</label><label class="btn sm" style="display:inline-flex">📷 ถ่ายรูป / เลือกรูป<input type="file" id="nImgs" accept="image/*" multiple style="display:none"></label><span class="readonly-note" id="nImgsNote">ยังไม่ได้เลือก</span></div>
@@ -1760,8 +1772,9 @@ $('#modalHost').addEventListener('click',e=>{
   }
   if(t.id==='sSave'){
     const lines=s=>s.split('\n').map(x=>x.trim()).filter(Boolean);
+    // ช่องแผนกว่าง = server จะเอารายชื่อจากโค้ดมาแทน แผนกที่เพิ่มเองในชีทจะหาย จึงไม่ยอมบันทึก
+    if(!lines($('#sDepts').value).length){toast('รายชื่อแผนกต้องมีอย่างน้อย 1 แผนก (ถ้าล้างจนว่าง แผนกที่เพิ่มเองจะหาย)',true);$('#sDepts').focus();return}
     settings.depts=lines($('#sDepts').value);settings.types=lines($('#sTypes').value);settings.sites=lines($('#sSites').value);settings.contractors=lines($('#sContractors').value);
-    if(!settings.depts.length)settings.depts=clone(DEFAULT_SETTINGS.depts);
     t.disabled=true;
     gs('saveSettings',clone(settings)).then(()=>{toast('บันทึกการตั้งค่าแล้ว');t.disabled=false;render()}).catch(e=>{toast('บันทึกตั้งค่าไม่สำเร็จ: '+cleanMsg(errMsg(e)),true);t.disabled=false});
   }
