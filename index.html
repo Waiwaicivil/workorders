@@ -96,7 +96,7 @@ a{color:var(--accent)}
 .wsSel:hover{background-color:rgba(255,255,255,.1)}
 .wsSel option{color:#000;background:#fff;font-size:14px}
 .seg.nav{border-color:rgba(255,255,255,.4);background:transparent}
-.seg.nav button{color:var(--nav-muted)}
+.seg.nav button{color:var(--nav-muted);white-space:nowrap}
 .seg.nav button.on{background:#FFFFFF;color:var(--nav)}
 .signbox{display:inline-flex;align-items:center;gap:6px;font-weight:500;border:1px solid var(--line-strong);border-radius:4px;padding:4px 9px;background:var(--surface);cursor:pointer}
 .signbox input{width:16px;height:16px;margin:0;accent-color:var(--s-green-fg)}
@@ -176,7 +176,7 @@ td.date{white-space:nowrap;font-size:13px}
 .dhead .line1{display:flex;align-items:center;gap:8px}
 .dhead .no{border:0;background:transparent;font-variant-numeric:tabular-nums;font-size:13.5px;color:var(--muted);padding:2px 4px;border-radius:4px;width:170px}
 .dhead .no:hover,.dhead .no:focus{background:var(--surface-2)}
-.dhead .title{border:0;background:transparent;font-size:19px;font-weight:600;width:100%;padding:2px 4px;border-radius:4px;line-height:1.3}
+.dhead .title{border:0;background:transparent;font-size:19px;font-weight:600;width:100%;padding:2px 4px;border-radius:4px;line-height:1.3;display:block;resize:none;overflow:hidden;min-height:0;height:auto;font-family:inherit}
 .dhead .title:hover,.dhead .title:focus{background:var(--surface-2)}
 .dhead .line3{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .dhead select.status{border:1px solid var(--line-strong);border-radius:4px;padding:5px 8px;background:var(--surface);font-weight:500}
@@ -244,6 +244,8 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .modal .box.big{width:min(1150px,97vw);min-height:80vh;overflow:visible;font-size:15px}
 .modal .box.big .utable{font-size:14.5px}
 .modal .box.big .utable th,.modal .box.big .utable td{padding:9px 12px}
+#execStatsBody th:first-child,#execStatsBody td:first-child{position:sticky;left:0;background:var(--surface);box-shadow:1px 0 0 var(--line);z-index:1}
+#execStatsBody th:first-child{background:var(--surface-2);z-index:2}
 .modal h2{margin:0 0 14px;font-size:17px;font-weight:600;color:var(--text)}
 .modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .modal textarea.list{min-height:150px;font-size:13.5px}
@@ -375,6 +377,14 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 @media (max-width:760px){
   .userchip .dot{display:inline-block}
   #btnExport{flex:1 1 45%}
+  /* iPhone Safari ซูมหน้าเข้าเองเมื่อโฟกัสช่องที่ตัวอักษรเล็กกว่า 16px และไม่ซูมกลับ → ช่องกรอกทุกช่องบนมือถือใช้ 16px */
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not(.title),select,textarea:not(.title){font-size:16px!important}
+  .dhead .title{font-size:18px}
+  /* ปุ่มเล็กสูงอย่างน้อย 36px ให้นิ้วแตะถูก */
+  .btn.sm{min-height:36px;padding:6px 10px}
+  .btn.icon{width:36px;height:36px}
+  .log .del,.files .del{min-height:32px;padding:0 8px}
+  .modal .box.big{min-height:0}
 }
 </style>
 </head>
@@ -1332,7 +1342,7 @@ function renderDrawer(){
         <button class="btn sm ghost" id="dPrint" title="พิมพ์ใบงานพร้อมช่องเซ็นรับ">🖨 พิมพ์</button>
         <button class="btn icon ghost" id="dClose" aria-label="ปิด">✕</button>
       </div>
-      <input class="title" data-f="title" maxlength="${MAX.title}" value="${esc(it.title||'')}" placeholder="หัวข้องาน" ${dis}>
+      <textarea class="title" data-f="title" rows="1" maxlength="${MAX.title}" placeholder="หัวข้องาน" ${dis}>${esc(it.title||'')}</textarea>
       <div class="line3">
         <select class="status" data-f="status" ${dis||(it.signed?'disabled title="เซ็นรับแล้ว เปลี่ยนสถานะไม่ได้ ต้องยกเลิกเซ็นรับก่อน"':'')}>${opt(STATUSES,it.status,'name')}</select>
         ${it.status!=='done'&&!ro&&!it.signed?'<button class="btn sm" id="dDone">✓ ทำเสร็จแล้ว</button>':''}
@@ -1393,7 +1403,7 @@ function renderDrawer(){
     <div class="dfoot"><span>สร้าง ${it.createdAt?fmtDT(it.createdAt):'—'}</span><span>แก้ไขล่าสุด ${it.updatedAt?fmtDT(it.updatedAt):'—'}${it.updatedBy?' โดย '+esc(it.updatedBy):''}</span><span id="saveState" class="savestate"></span></div>`;
   if(ro){$$('.dbody input,.dbody select,.dbody textarea',dr).forEach(el=>{if(el.id!=='fileInput')el.disabled=true})}
   dr.classList.add('show');sc.classList.add('show');
-  renderSaveState();
+  growTitle();renderSaveState();
   const body=$('.dbody',dr);if(body&&keepFocus.scroll)body.scrollTop=keepFocus.scroll;
   if(keepFocus.name){const el=dr.querySelector(`[data-f="${keepFocus.name}"], #${keepFocus.name}`);if(el){el.focus({preventScroll:true});try{if(keepFocus.start!=null&&el.setSelectionRange)el.setSelectionRange(keepFocus.start,keepFocus.end)}catch(e){}}}
 }
@@ -1415,6 +1425,8 @@ function loadHistory(id,bg){
     .then(()=>{if(gen===wsGen&&openId===id)renderDrawerBg()});
   if(!bg&&openId===id)renderDrawer();
 }
+// หัวข้องานเป็น textarea บรรทัดเดียวที่ยืดตามข้อความ (ชื่องานยาวบนมือถืออ่านครบ ไม่ถูกตัด) Enter = จบการแก้ ไม่ขึ้นบรรทัดใหม่
+function growTitle(){const t=$('#drawer .title');if(!t)return;t.style.height='auto';t.style.height=t.scrollHeight+'px'}
 function openItem(id){openId=id;confirmDelete=false;renderDrawer()}
 function closeDrawer(){openId=null;confirmDelete=false;renderDrawer()}
 
@@ -1603,7 +1615,7 @@ function renderBackup(b){
 // ฟอร์มใบงานใหม่ที่มีข้อความพิมพ์ค้าง: กด Esc / คลิกพื้นหลัง / ยกเลิก จะถามก่อน (แถบในฟอร์ม ไม่ใช้ dialog ของเบราว์เซอร์) กันข้อมูลหายเพราะมือลั่น
 function newFormDirty(){return ['nNo','nTitle','nDept','nReq','nLoc','nContractor','nDetail','nPoRef','nBudget'].some(i=>$('#'+i)&&$('#'+i).value.trim())||['nImgs','nFiles'].some(i=>$('#'+i)&&$('#'+i).files&&$('#'+i).files.length)}
 function closeModal(force){const m=$('#modal');if(m&&m.hasAttribute('data-forced'))return;
-  if(!force&&$('#nTitle')&&newFormDirty()){const e=$('#nErr');if(e){e.innerHTML='ยังไม่ได้สร้างใบงาน ข้อมูลที่พิมพ์จะหาย <button class="btn sm danger" id="nDiscard" style="margin-left:6px">ปิดทิ้ง</button> <button class="btn sm" id="nKeep">กรอกต่อ</button>';$('#nKeep').focus()}return}execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
+  if(!force&&$('#nTitle')&&newFormDirty()){const e=$('#nErr');if(e){e.innerHTML='<span style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center"><span>ยังไม่ได้สร้างใบงาน ข้อมูลที่พิมพ์จะหาย</span><span style="display:inline-flex;gap:6px"><button class="btn sm danger" id="nDiscard">ปิดทิ้ง</button><button class="btn sm" id="nKeep">กรอกต่อ</button></span></span>';$('#nKeep').focus()}return}execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
 
 /* ---------- events ---------- */
 function applyWs(){
@@ -1668,6 +1680,7 @@ drawer.addEventListener('input',e=>{
   if(t.type==='checkbox')return;
   let v=t.value;
   if(f==='status'||t.tagName==='SELECT')return;
+  if(f==='title'){if(/[\r\n]/.test(v)){v=v.replace(/[\r\n]+/g,' ');t.value=v}growTitle()}
   patch(openId,{[f]:v},{debounce:true,silent:true});
 });
 drawer.addEventListener('change',e=>{
@@ -1702,7 +1715,8 @@ drawer.addEventListener('click',e=>{
     deleteFileUI(openId,t.dataset.fdel);return;
   }
 });
-drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();$('#logAdd').click()}});
+drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();$('#logAdd').click()}
+  if(e.key==='Enter'&&e.target.dataset&&e.target.dataset.f==='title'){e.preventDefault();e.target.blur()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(comboInput&&!comboEl.classList.contains('hidden')){comboClose();return}if($('#modal'))closeModal(!!$('#nDiscard'));else if(openId)closeDrawer()}});
 drawer.addEventListener('focusout',()=>setTimeout(flushDrawer,0));
 document.addEventListener('pointerdown',()=>{ptrDown=true},true);
@@ -1807,7 +1821,9 @@ function comboOpen(input){
 }
 function comboPosition(input){
   const r=input.getBoundingClientRect();
-  comboEl.style.left=r.left+'px';comboEl.style.width=Math.max(r.width,260)+'px';
+  // กว้างอย่างน้อย 260 แต่ไม่เกินจอ และเลื่อนซ้ายถ้าช่องอยู่คอลัมน์ขวาของมือถือ (ไม่งั้นรายการทะลุขอบขวา)
+  const width=Math.min(Math.max(r.width,260),window.innerWidth-16);const left=Math.max(8,Math.min(r.left,window.innerWidth-8-width));
+  comboEl.style.left=left+'px';comboEl.style.width=width+'px';
   const below=window.innerHeight-r.bottom;
   if(below<200&&r.top>below){comboEl.style.top='';comboEl.style.bottom=(window.innerHeight-r.top+2)+'px';comboEl.style.maxHeight=Math.min(360,r.top-10)+'px'}
   else{comboEl.style.bottom='';comboEl.style.top=(r.bottom+2)+'px';comboEl.style.maxHeight=Math.min(360,below-10)+'px'}
