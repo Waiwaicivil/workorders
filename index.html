@@ -825,7 +825,7 @@ async function saveNow(id,attempt){
 const FIELD_TH={no:'เลขที่',title:'หัวข้องาน',dept:'แผนกที่ขอ',type:'ประเภทงาน',priority:'ความสำคัญ',status:'สถานะ',requester:'ผู้ขอ',location:'สถานที่',received:'วันรับใบงาน',start:'วันเริ่มงาน',due:'กำหนดเสร็จ',finished:'วันเสร็จจริง',progress:'ความคืบหน้า',detail:'รายละเอียด',assignee:'ผู้รับผิดชอบ',budget:'งบ',contractor:'ผู้รับเหมา',poRef:'PR/PO',signed:'เซ็นรับ'};
 function retryAll(){Object.keys(dirty).forEach(id=>{if(dirty[id]&&Object.keys(dirty[id]).length&&findItem(id)&&!saving[id])saveNow(id,0)})}
 function hasUnsaved(){return Object.keys(writeTimers).length>0||Object.keys(saving).some(k=>saving[k])||Object.keys(dirty).some(k=>dirty[k]&&Object.keys(dirty[k]).length&&findItem(k))}
-function hasPendingWork(){return hasUnsaved()||pendingLogs>0||Object.keys(uploading).length>0}
+function hasPendingWork(){return hasUnsaved()||pendingLogs>0||Object.keys(uploading).length>0||Object.keys(uploadQ).length>0}
 window.addEventListener('beforeunload',e=>{if(hasPendingWork()){e.preventDefault();e.returnValue='ยังบันทึกไม่เสร็จ';return e.returnValue}});
 function renderUnsaved(){
   const bad=Object.keys(saveState).filter(id=>saveState[id].state==='error'&&dirty[id]&&Object.keys(dirty[id]).length&&findItem(id));
@@ -866,7 +866,8 @@ function deleteLogEntry(id,ts){
   gs('deleteLog',id,ts,entry.by).then(()=>{toast('ลบบันทึกแล้ว');if(histCache[id]&&histCache[id].rows)loadHistory(id,true)}).catch(e=>{const cur=findItem(id);if(cur)cur.log=(cur.log||[]).concat([entry]);toast(cleanMsg(errMsg(e)),true);renderDrawerBg()});
 }
 function setStatus(id,status){
-  const it=findItem(id);if(!it||it.status===status||!canEditItem(it))return;
+  // ใบที่เซ็นรับแล้วเปลี่ยนสถานะไม่ได้ ต้องยกเลิกเซ็นรับก่อน (ไม่งั้นได้ใบ "เซ็นรับแล้ว" ที่สถานะไม่ใช่เสร็จแล้ว)
+  const it=findItem(id);if(!it||it.status===status||it.signed||!canEditItem(it))return;
   const f={status,progress:pctOf(status)};
   if(status==='done'){if(!it.finished)f.finished=todayISO()}
   if(status==='progress'&&!it.start)f.start=todayISO();
@@ -952,8 +953,14 @@ async function uploadFileUI(id,file){
     rd.readAsDataURL(file);
   });
 }
-async function uploadFilesUI(id,files){
-  for(const f of Array.from(files||[])){if(!findItem(id))return;await uploadFileUI(id,f)}
+// คิวอัปโหลดต่อใบงาน: เลือกไฟล์หลายชุดติดกันจะต่อคิว ไม่มีไฟล์ถูกข้าม
+const uploadQ={};
+function uploadFilesUI(id,files){
+  const list=Array.from(files||[]);
+  const run=async()=>{for(const f of list){if(!findItem(id))return;await uploadFileUI(id,f)}};
+  const p=(uploadQ[id]||Promise.resolve()).then(run,run);
+  uploadQ[id]=p;p.then(()=>{if(uploadQ[id]===p)delete uploadQ[id]});
+  return p;
 }
 const fileCache={};
 // เก็บไฟล์ที่ดึงมาไว้ไม่เกิน 40 ไฟล์ และคืนหน่วยความจำรูปเมื่อสลับแผนก/ออกจากระบบ
@@ -1315,8 +1322,8 @@ function renderDrawer(){
       </div>
       <input class="title" data-f="title" value="${esc(it.title||'')}" placeholder="หัวข้องาน" ${dis}>
       <div class="line3">
-        <select class="status" data-f="status" ${dis}>${opt(STATUSES,it.status,'name')}</select>
-        ${it.status!=='done'&&!ro?'<button class="btn sm" id="dDone">✓ ทำเสร็จแล้ว</button>':''}
+        <select class="status" data-f="status" ${dis||(it.signed?'disabled title="เซ็นรับแล้ว เปลี่ยนสถานะไม่ได้ ต้องยกเลิกเซ็นรับก่อน"':'')}>${opt(STATUSES,it.status,'name')}</select>
+        ${it.status!=='done'&&!ro&&!it.signed?'<button class="btn sm" id="dDone">✓ ทำเสร็จแล้ว</button>':''}
         <label class="signbox ${it.signed?'on':''}" title="${canSign()?'ติ๊กเมื่อมีการเซ็นรับงานแล้ว งานจะย้ายไปคลังงานที่เซ็นแล้ว':'เฉพาะผู้ที่มีสิทธิ์เซ็นรับงานเท่านั้นที่ติ๊กได้'}"><input type="checkbox" data-f="signed" ${it.signed?'checked':''} ${canSign()?'':'disabled'}> เซ็นรับงานแล้ว${it.signed&&it.signedAt?' · '+fmtD(it.signedAt):''}${it.signed&&it.signedBy?' โดย '+esc(it.signedBy):''}${canSign()?'':' <span class="readonly-note">(ผู้มีสิทธิ์เซ็นรับ)</span>'}</label>
       </div>
       ${lockedNote}
@@ -1331,8 +1338,8 @@ function renderDrawer(){
           <div class="f wide"><label>สถานที่ / หน้างาน</label><input data-f="location" list="siteList" value="${esc(it.location||'')}" placeholder="เช่น โรงงาน 2 · บ่อแป้ง" ${dis}><datalist id="siteList">${settings.sites.map(s=>`<option value="${esc(s)}">`).join('')}</datalist></div>
           <div class="f"><label>ผู้ดำเนินการ</label><select data-f="assignee" ${dis}><option value="">— เลือก —</option><option value="ภายในแผนก" ${it.assignee==='ภายในแผนก'?'selected':''}>ภายในแผนก</option><option value="ผู้รับเหมา" ${it.assignee==='ผู้รับเหมา'?'selected':''}>ผู้รับเหมา</option></select></div>
           <div class="f ${it.assignee==='ผู้รับเหมา'?'':'hidden'}"><label>ชื่อผู้รับเหมา</label><input data-f="contractor" data-combo="contractors" value="${esc(it.contractor||'')}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off" ${dis}></div>
-          <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input data-f="budget" value="${esc(it.budget||'')}" placeholder="เช่น 45,000" inputmode="decimal" ${dis}></div>
-          <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input data-f="poRef" value="${esc(it.poRef||'')}" placeholder="เช่น PR-2569-0123" ${dis}></div>
+          <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input data-f="budget" value="${esc(it.budget||'')}" placeholder="เช่น 45,000" inputmode="decimal" maxlength="60" ${dis}></div>
+          <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input data-f="poRef" value="${esc(it.poRef||'')}" placeholder="เช่น PR-2569-0123" maxlength="60" ${dis}></div>
         </div>
       </div>
       <div class="sect"><h3>กำหนดเวลา</h3>
@@ -1463,8 +1470,8 @@ function showNewModal(){
       <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
       <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
       <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
-      <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input id="nPoRef" placeholder="เช่น PR-2569-0123"></div>
-      <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input id="nBudget" placeholder="เช่น 45,000" inputmode="decimal"></div>
+      <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input id="nPoRef" placeholder="เช่น PR-2569-0123" maxlength="60"></div>
+      <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input id="nBudget" placeholder="เช่น 45,000" inputmode="decimal" maxlength="60"></div>
       <div class="f"><label>รูปหน้างาน</label><label class="btn sm" style="display:inline-flex">📷 ถ่ายรูป / เลือกรูป<input type="file" id="nImgs" accept="image/*" multiple style="display:none"></label><span class="readonly-note" id="nImgsNote">ยังไม่ได้เลือก</span></div>
       <div class="f"><label>ไฟล์แนบอื่น ๆ</label><label class="btn sm" style="display:inline-flex">📎 แนบไฟล์<input type="file" id="nFiles" accept="application/pdf,.dwg,.dxf,.xlsx,.xls,.docx,.doc,.zip,.csv,.txt" multiple style="display:none"></label><span class="readonly-note" id="nFilesNote">ยังไม่ได้เลือก (ไม่เกิน 15 MB ต่อไฟล์)</span></div>
     </div>
@@ -1474,7 +1481,9 @@ function showNewModal(){
   setTimeout(()=>$('#nTitle').focus(),30);
 }
 async function createItem(){
-  const btn=$('#mSave'),err=$('#nErr');
+  const btn=$('#mSave'),err=$('#nErr'),box=$('#modal');
+  // จำรูป/ไฟล์ไว้ตั้งแต่ตอนกด: ระหว่างรอบันทึก ฟอร์มอาจถูกปิดหรือเปิดฟอร์มใหม่ (ไฟล์จะไปติดผิดใบ)
+  const ups=Array.from($('#nImgs').files||[]).concat(Array.from($('#nFiles').files||[]));
   const title=$('#nTitle').value.trim();
   if(!title){$('#nTitle').focus();err.textContent='กรุณากรอกหัวข้องาน';return}
   const no=$('#nNo').value.trim();
@@ -1488,10 +1497,10 @@ async function createItem(){
     const r=await gs('saveItem',doc);
     delete doc.autoNo;delete doc.base;
     doc.no=r.no;doc.updatedAt=r.updatedAt;doc.updatedBy=r.updatedBy;doc.files=[];doc.log=[];
-    items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;serverSnap[id]=clone(doc);newItemId=null;
+    items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;serverSnap[id]=clone(doc);if(newItemId===id)newItemId=null;
     // รูป/ไฟล์ต้องมีใบงานในชีทก่อน จึงส่งหลังสร้างเสร็จ และเปิดใบงานให้เห็นความคืบหน้าการอัปโหลด
-    const ups=Array.from($('#nImgs').files||[]).concat(Array.from($('#nFiles').files||[]));
-    closeModal();filters.tile='';render();
+    // ปิดเฉพาะฟอร์มของใบนี้ ถ้าผู้ใช้เปิดฟอร์มอื่นไปแล้วห้ามปิดทิ้ง
+    if($('#modal')===box)closeModal();filters.tile='';render();
     toast('สร้างใบงาน '+doc.no+' แล้ว');
     addLogEntry(id,'รับใบงาน',doc.status);
     if(ups.length){openItem(id);uploadFilesUI(id,ups)}
