@@ -513,6 +513,7 @@ function periodKey(){return page==='archive'?'signedAt':'received'}
 function findItem(id){return items[id]||archive[id]||null}
 function canEdit(){return !!session&&(session.user.role==='admin'||session.user.role==='staff')}
 function isAdmin(){return !!session&&session.user.role==='admin'}
+function canSign(){return canEdit()&&!!session.user.canSign} // เซ็นรับ/ยกเลิกเซ็นรับ: เฉพาะผู้ที่ติ๊กสิทธิ์ไว้ ไม่ผูกกับบทบาท
 function canDeleteItem(it){return isAdmin()||(!!session&&session.user.role==='staff'&&!!session.user.canDelete&&!(it&&it.signed))}
 function canEditItem(it){return canEdit()&&(!it.signed||isAdmin())}
 function me(){return session?(session.user.display||session.user.username):''}
@@ -729,7 +730,8 @@ function initStore(){
 function setSaveState(id,state,msg){saveState[id]={state,msg,at:Date.now()};renderSaveState();renderUnsaved()}
 function patch(id,fields,opts){
   opts=opts||{};
-  const it=findItem(id);if(!it||!canEditItem(it))return;
+  // ผู้มีสิทธิ์เซ็นรับแตะใบที่เซ็นแล้วได้เฉพาะตอนยกเลิกเซ็นรับ (ตรงกับ saveItem ฝั่งเซิร์ฟเวอร์)
+  const it=findItem(id);if(!it||!(canEditItem(it)||(canSign()&&fields.signed===false)))return;
   Object.assign(it,fields,{updatedAt:Date.now()});
   dirty[id]=Object.assign(dirty[id]||{},fields);
   clearTimeout(writeTimers[id]);
@@ -783,7 +785,7 @@ async function saveNow(id,attempt){
         // ตั้งฐานใหม่เป็นสำเนาล่าสุดจากชีท แล้ววางเฉพาะช่องที่เราแก้ทับ
         const loc=findItem(id);
         // เครื่องอื่นเซ็นรับไปแล้ว และเราไม่ใช่ผู้ดูแลระบบ → แก้ต่อไม่ได้ ทิ้งสิ่งที่แก้ค้าง ไม่วนบันทึกซ้ำ
-        const lockedNow=!!snap.signed&&!isAdmin();
+        const lockedNow=!!snap.signed&&!isAdmin()&&!(canSign()&&dirty[id]&&dirty[id].signed===false);
         if(lockedNow)dirty[id]={};
         if(loc){const logs=mergeLogs(snap.log,loc.log,lastReadTime-15000);const files=uploading[id]?loc.files:snap.files;
           Object.assign(loc,clone(snap),dirty[id]||{});loc.log=logs;loc.files=files;
@@ -838,7 +840,7 @@ function removeItem(id){
 
 /* ---------- บันทึกความคืบหน้า (append รายแถว) ---------- */
 function addLogEntry(id,text,status){
-  const it=findItem(id);if(!it||!canEditItem(it))return;
+  const it=findItem(id);if(!it||!(canEditItem(it)||canSign()))return;
   const entry={ts:Date.now(),status:status||it.status,text,by:me(),u:session?session.user.username:'',pending:true};
   it.log=(it.log||[]).concat([entry]);
   pendingLogs++;
@@ -869,12 +871,12 @@ function setStatus(id,status){
   if(status==='done'){if(!it.finished)f.finished=todayISO()}
   if(status==='progress'&&!it.start)f.start=todayISO();
   if(status!=='done'&&it.status==='done')f.finished='';
-  if(status!=='done'&&it.signed&&isAdmin()){f.signed=false;f.signedAt='';f.signedBy=''}
+  if(status!=='done'&&it.signed&&canSign()){f.signed=false;f.signedAt='';f.signedBy=''}
   patch(id,f);
   addLogEntry(id,'เปลี่ยนสถานะเป็น “'+statusOf(status).name+'”',status);
 }
 function signItem(id,on){
-  if(!isAdmin()){toast('เฉพาะผู้ดูแลระบบเท่านั้นที่เซ็นรับได้');renderDrawer();return}
+  if(!canSign()){toast('เฉพาะผู้ที่มีสิทธิ์เซ็นรับงานเท่านั้นที่ติ๊กได้');renderDrawer();return}
   const it=findItem(id);if(!it)return;
   const f={signed:!!on,signedAt:on?todayISO():'',signedBy:on?me():''};
   if(on){f.status='done';f.progress=100;if(!it.finished)f.finished=todayISO()}
@@ -1299,7 +1301,7 @@ function renderDrawer(){
   const typeList=settings.types.includes(it.type)||!it.type?settings.types:[it.type].concat(settings.types);
   const logs=(it.log||[]).slice().sort((a,b)=>b.ts-a.ts);
   const ro=!canEditItem(it);const dis=ro?'disabled':'';
-  const lockedNote=it.signed&&!isAdmin()?'<div class="note" style="margin-top:8px">ใบงานนี้เซ็นรับแล้ว แก้ไขได้เฉพาะผู้ดูแลระบบ</div>':(!canEdit()?'<div class="note" style="margin-top:8px">สิทธิ์ของคุณดูได้อย่างเดียว</div>':'');
+  const lockedNote=it.signed&&!isAdmin()?'<div class="note" style="margin-top:8px">ใบงานนี้เซ็นรับแล้ว แก้ไขได้เฉพาะผู้ดูแลระบบ'+(canSign()?' (เอาติ๊กเซ็นรับออกเพื่อกลับมาแก้ไขได้)':'')+'</div>':(!canEdit()?'<div class="note" style="margin-top:8px">สิทธิ์ของคุณดูได้อย่างเดียว</div>':'');
   const links=urlsIn(it.detail);
   const files=it.files||[];const imgs=files.filter(isImg),docs=files.filter(f=>!isImg(f));
   dr.innerHTML=`
@@ -1315,7 +1317,7 @@ function renderDrawer(){
       <div class="line3">
         <select class="status" data-f="status" ${dis}>${opt(STATUSES,it.status,'name')}</select>
         ${it.status!=='done'&&!ro?'<button class="btn sm" id="dDone">✓ ทำเสร็จแล้ว</button>':''}
-        <label class="signbox ${it.signed?'on':''}" title="${isAdmin()?'ติ๊กเมื่อมีการเซ็นรับงานแล้ว งานจะย้ายไปคลังงานที่เซ็นแล้ว':'เฉพาะผู้ดูแลระบบเท่านั้นที่ติ๊กได้'}"><input type="checkbox" data-f="signed" ${it.signed?'checked':''} ${isAdmin()?'':'disabled'}> เซ็นรับงานแล้ว${it.signed&&it.signedAt?' · '+fmtD(it.signedAt):''}${it.signed&&it.signedBy?' โดย '+esc(it.signedBy):''}${isAdmin()?'':' <span class="readonly-note">(admin)</span>'}</label>
+        <label class="signbox ${it.signed?'on':''}" title="${canSign()?'ติ๊กเมื่อมีการเซ็นรับงานแล้ว งานจะย้ายไปคลังงานที่เซ็นแล้ว':'เฉพาะผู้ที่มีสิทธิ์เซ็นรับงานเท่านั้นที่ติ๊กได้'}"><input type="checkbox" data-f="signed" ${it.signed?'checked':''} ${canSign()?'':'disabled'}> เซ็นรับงานแล้ว${it.signed&&it.signedAt?' · '+fmtD(it.signedAt):''}${it.signed&&it.signedBy?' โดย '+esc(it.signedBy):''}${canSign()?'':' <span class="readonly-note">(ผู้มีสิทธิ์เซ็นรับ)</span>'}</label>
       </div>
       ${lockedNote}
     </div>
@@ -1514,7 +1516,7 @@ function showUserModal(forced){
 }
 let usersCache=[];
 function userRows(){
-  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td style="text-align:center"><input type="checkbox" data-uf="simpleForm" ${u.simpleForm?'checked':''} title="ฟอร์มใบงานใหม่แบบย่อ (ซ่อนประเภทงาน/ผู้รับผิดชอบ/วันเริ่ม/กำหนดเสร็จ/รายละเอียด)"></td><td style="text-align:center">${u.role==='admin'?'<span class="readonly-note">ทุกสิทธิ์</span>':`<input type="checkbox" data-uf="canDelete" ${u.canDelete?'checked':''} title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">`}</td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
+  return usersCache.map(u=>`<tr data-u="${esc(u.username)}"><td>${esc(u.username)}</td><td><input data-uf="display" value="${esc(u.display)}"></td><td><select data-uf="role"><option value="admin" ${u.role==='admin'?'selected':''}>ผู้ดูแลระบบ</option><option value="staff" ${u.role==='staff'?'selected':''}>เจ้าหน้าที่</option><option value="viewer" ${u.role==='viewer'?'selected':''}>ดูอย่างเดียว</option></select></td><td><input data-uf="email" type="email" value="${esc(u.email||'')}" placeholder="รับอีเมลแจ้งเตือน"></td><td style="text-align:center"><input type="checkbox" data-uf="simpleForm" ${u.simpleForm?'checked':''} title="ฟอร์มใบงานใหม่แบบย่อ (ซ่อนประเภทงาน/ผู้รับผิดชอบ/วันเริ่ม/กำหนดเสร็จ/รายละเอียด)"></td><td style="text-align:center">${u.role==='admin'?'<span class="readonly-note">ทุกสิทธิ์</span>':`<input type="checkbox" data-uf="canDelete" ${u.canDelete?'checked':''} title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">`}</td><td style="text-align:center"><input type="checkbox" data-uf="canSign" ${u.canSign?'checked':''} title="ติ๊กเซ็นรับงาน / ยกเลิกเซ็นรับได้ (ไม่ขึ้นกับบทบาท)"></td><td><input data-uf="password" type="password" placeholder="ตั้งใหม่ (เว้นว่าง=คงเดิม)" autocomplete="new-password"></td><td style="white-space:nowrap"><button class="btn sm" data-usave="${esc(u.username)}">บันทึก</button> <button class="btn sm danger" data-udel="${esc(u.username)}" ${u.username===session.user.username?'disabled':''}>ลบ</button></td></tr>`).join('');
 }
 async function loadUsersInto(){
   try{usersCache=await gs('listUsers');const tb=$('#uBody');if(tb)tb.innerHTML=userRows()}catch(e){toast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ')}
@@ -1531,8 +1533,8 @@ function showSettingsModal(){
     </div>
     <div class="actions"><button class="btn" id="mCancel">ปิด</button><button class="btn primary" id="sSave">บันทึกรายการ</button></div>
     <h2 style="margin-top:22px">ผู้ใช้และสิทธิ์</h2>
-    <div class="readonly-note" style="margin-bottom:8px">ผู้ดูแลระบบ = ทำได้ทุกอย่าง รวมเซ็นรับงาน/ลบ/ตั้งค่า · เจ้าหน้าที่ = เพิ่ม/แก้ใบงานและบันทึกความคืบหน้า · ดูอย่างเดียว = เปิดดูเท่านั้น · ผู้ใช้ใหม่หรือถูกตั้งรหัสให้ จะถูกบังคับเปลี่ยนรหัสตอนเข้าครั้งแรก</div>
-    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th title="ฟอร์มใบงานใหม่แบบย่อ">ฟอร์มย่อ</th><th title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">ลบใบงานได้</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="8" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
+    <div class="readonly-note" style="margin-bottom:8px">ผู้ดูแลระบบ = ลบ/ตั้งค่า/จัดการผู้ใช้/แก้ใบที่เซ็นแล้ว · เซ็นรับงานได้เฉพาะผู้ที่ติ๊กช่อง “เซ็นรับงานได้” (ไม่ขึ้นกับบทบาท) ·เจ้าหน้าที่ = เพิ่ม/แก้ใบงานและบันทึกความคืบหน้า · ดูอย่างเดียว = เปิดดูเท่านั้น · ผู้ใช้ใหม่หรือถูกตั้งรหัสให้ จะถูกบังคับเปลี่ยนรหัสตอนเข้าครั้งแรก</div>
+    <div style="overflow-x:auto"><table class="utable"><thead><tr><th>ชื่อผู้ใช้</th><th>ชื่อแสดง</th><th>สิทธิ์</th><th>อีเมล</th><th title="ฟอร์มใบงานใหม่แบบย่อ">ฟอร์มย่อ</th><th title="ลบใบงาน (ย้ายลงถังขยะ) ได้ แต่เข้าถังขยะไม่ได้">ลบใบงานได้</th><th title="ติ๊กเซ็นรับงาน / ยกเลิกเซ็นรับได้">เซ็นรับงานได้</th><th>รหัสผ่าน</th><th></th></tr></thead><tbody id="uBody"><tr><td colspan="9" class="readonly-note">กำลังโหลด…</td></tr></tbody></table></div>
     <h3 style="font-size:14px;margin:16px 0 6px">เพิ่มผู้ใช้ใหม่</h3>
     <div class="grid">
       <div class="f"><label>ชื่อผู้ใช้ (a-z, 0-9)</label><input id="nuUser" autocapitalize="off" spellcheck="false"></div>
@@ -1542,6 +1544,7 @@ function showSettingsModal(){
       <div class="f"><label>รหัสผ่านเริ่มต้น (อย่างน้อย 6 ตัว)</label><input id="nuPass" type="password" autocomplete="new-password"></div>
       <div class="f"><label>ฟอร์มใบงานใหม่</label><select id="nuSimple"><option value="">เต็ม</option><option value="1">ย่อ (เฉพาะช่องจำเป็น)</option></select></div>
       <div class="f"><label>ลบใบงาน (เจ้าหน้าที่)</label><select id="nuCanDelete"><option value="">ไม่ได้</option><option value="1">ลบได้ แต่เข้าถังขยะไม่ได้</option></select></div>
+      <div class="f"><label>เซ็นรับงาน</label><select id="nuCanSign"><option value="">ไม่ได้</option><option value="1">ติ๊กเซ็นรับได้</option></select></div>
     </div>
     <div class="actions" style="justify-content:flex-start"><button class="btn primary" id="nuAdd">เพิ่มผู้ใช้</button></div>
     <h2 style="margin-top:22px">ถังขยะ · ${esc(WORKSPACES[ws].name)}</h2>
@@ -1693,7 +1696,7 @@ $('#modalHost').addEventListener('change',e=>{
   if(e.target.id==='esYear'||e.target.id==='esMonth'){execPeriod.y=$('#esYear').value;execPeriod.m=$('#esMonth').value;showExecStatsModal();return}
   if(e.target.id==='esAll'){execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
   if(e.target.dataset.espick!==undefined){const k=e.target.dataset.espick;if(!execPick)execPick=new Set();if(e.target.checked)execPick.add(k);else execPick.delete(k);if(!execPick.size)execPick=null;execPickOpen=true;const st=$('#esPickMenu')?$('#esPickMenu').scrollTop:0;showExecStatsModal();if($('#esPickMenu'))$('#esPickMenu').scrollTop=st;return}
-  const cb=e.target;if(!cb||(cb.dataset.uf!=='simpleForm'&&cb.dataset.uf!=='canDelete'))return;
+  const cb=e.target;if(!cb||(cb.dataset.uf!=='simpleForm'&&cb.dataset.uf!=='canDelete'&&cb.dataset.uf!=='canSign'))return;
   const tr=cb.closest('tr');const btn=$('[data-usave]',tr);if(btn)btn.click();
 });
 $('#modalHost').addEventListener('click',e=>{
@@ -1714,8 +1717,8 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.dataset.usave){
-    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,canDelete:!!($('[data-uf="canDelete"]',tr)&&$('[data-uf="canDelete"]',tr).checked),password:$('[data-uf="password"]',tr).value};
-    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto();if(session&&u.username===session.user.username){session.user.simpleForm=u.simpleForm;if(!isAdmin())session.user.canDelete=u.canDelete;session.user.email=u.email;saveSession();refresh(true)}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
+    const tr=t.closest('tr');const u={username:t.dataset.usave,display:$('[data-uf="display"]',tr).value.trim(),role:$('[data-uf="role"]',tr).value,email:$('[data-uf="email"]',tr).value.trim(),simpleForm:$('[data-uf="simpleForm"]',tr).checked,canDelete:!!($('[data-uf="canDelete"]',tr)&&$('[data-uf="canDelete"]',tr).checked),canSign:$('[data-uf="canSign"]',tr).checked,password:$('[data-uf="password"]',tr).value};
+    t.disabled=true;gs('upsertUser',u).then(()=>{toast('บันทึกผู้ใช้ '+u.username+' แล้ว');loadUsersInto();if(session&&u.username===session.user.username){session.user.simpleForm=u.simpleForm;session.user.canSign=u.canSign;if(!isAdmin())session.user.canDelete=u.canDelete;session.user.email=u.email;saveSession();refresh(true)}}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
   }
   if(t.dataset.udel){
@@ -1724,7 +1727,7 @@ $('#modalHost').addEventListener('click',e=>{
     return;
   }
   if(t.id==='nuAdd'){
-    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),simpleForm:!!$('#nuSimple').value,canDelete:!!$('#nuCanDelete').value,password:$('#nuPass').value};
+    const u={username:$('#nuUser').value.trim(),display:$('#nuDisplay').value.trim(),role:$('#nuRole').value,email:$('#nuEmail').value.trim(),simpleForm:!!$('#nuSimple').value,canDelete:!!$('#nuCanDelete').value,canSign:!!$('#nuCanSign').value,password:$('#nuPass').value};
     if(!u.username||!u.password){toast('กรอกชื่อผู้ใช้และรหัสผ่าน');return}
     t.disabled=true;gs('upsertUser',u).then(()=>{toast('เพิ่มผู้ใช้ '+u.username+' แล้ว');['nuUser','nuDisplay','nuEmail','nuPass'].forEach(i=>$('#'+i).value='');t.disabled=false;loadUsersInto()}).catch(e=>{toast(cleanMsg(errMsg(e)),true);t.disabled=false});
     return;
