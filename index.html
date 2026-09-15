@@ -626,7 +626,7 @@ async function doLogout(){try{await gs('logout')}catch(e){}
   wsGen++;refreshing=false;refreshPromise=null;archiveLoading=false;archivePromise=null;
   const fm=$('#modal');if(fm)fm.removeAttribute('data-forced');
   clearFileCaches();resetDataVer();
-  clearSession();closeModal();render();showLogin('ออกจากระบบแล้ว')}
+  clearSession();closeModal(true);render();showLogin('ออกจากระบบแล้ว')}
 
 /* ---------- โหลดข้อมูล ---------- */
 function setSync(on,label){
@@ -1512,7 +1512,7 @@ async function createItem(){
     items[id]=doc;base[id]=r.updatedAt;ackAt[id]=r.updatedAt;serverSnap[id]=clone(doc);if(newItemId===id)newItemId=null;
     // รูป/ไฟล์ต้องมีใบงานในชีทก่อน จึงส่งหลังสร้างเสร็จ และเปิดใบงานให้เห็นความคืบหน้าการอัปโหลด
     // ปิดเฉพาะฟอร์มของใบนี้ ถ้าผู้ใช้เปิดฟอร์มอื่นไปแล้วห้ามปิดทิ้ง
-    if($('#modal')===box)closeModal();filters.tile='';render();
+    if($('#modal')===box)closeModal(true);filters.tile='';render();
     toast('สร้างใบงาน '+doc.no+' แล้ว');
     addLogEntry(id,'รับใบงาน',doc.status);
     if(ups.length){openItem(id);uploadFilesUI(id,ups)}
@@ -1600,7 +1600,10 @@ function renderBackup(b){
   st.innerHTML=(b.enabled?`<b style="color:var(--s-green-fg)">เปิดอยู่</b> สำรองทุกวันเวลา ${String(b.hour).padStart(2,'0')}:00`:'<b style="color:var(--danger)">ปิดอยู่</b>')+' · '+last;
   ac.innerHTML=`<button class="btn primary" id="backupNow">สำรองตอนนี้</button>${b.enabled?'<button class="btn" id="backupOff">ปิดการสำรองอัตโนมัติ</button>':'<button class="btn" id="backupOn">เปิดการสำรองอัตโนมัติ</button>'}`;
 }
-function closeModal(){const m=$('#modal');if(m&&m.hasAttribute('data-forced'))return;execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
+// ฟอร์มใบงานใหม่ที่มีข้อความพิมพ์ค้าง: กด Esc / คลิกพื้นหลัง / ยกเลิก จะถามก่อน (แถบในฟอร์ม ไม่ใช้ dialog ของเบราว์เซอร์) กันข้อมูลหายเพราะมือลั่น
+function newFormDirty(){return ['nNo','nTitle','nDept','nReq','nLoc','nContractor','nDetail','nPoRef','nBudget'].some(i=>$('#'+i)&&$('#'+i).value.trim())||['nImgs','nFiles'].some(i=>$('#'+i)&&$('#'+i).files&&$('#'+i).files.length)}
+function closeModal(force){const m=$('#modal');if(m&&m.hasAttribute('data-forced'))return;
+  if(!force&&$('#nTitle')&&newFormDirty()){const e=$('#nErr');if(e){e.innerHTML='ยังไม่ได้สร้างใบงาน ข้อมูลที่พิมพ์จะหาย <button class="btn sm danger" id="nDiscard" style="margin-left:6px">ปิดทิ้ง</button> <button class="btn sm" id="nKeep">กรอกต่อ</button>';$('#nKeep').focus()}return}execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
 
 /* ---------- events ---------- */
 function applyWs(){
@@ -1700,7 +1703,7 @@ drawer.addEventListener('click',e=>{
   }
 });
 drawer.addEventListener('keydown',e=>{if(e.target.id==='logText'&&(e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();$('#logAdd').click()}});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(comboInput&&!comboEl.classList.contains('hidden')){comboClose();return}if($('#modal'))closeModal();else if(openId)closeDrawer()}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(comboInput&&!comboEl.classList.contains('hidden')){comboClose();return}if($('#modal'))closeModal(!!$('#nDiscard'));else if(openId)closeDrawer()}});
 drawer.addEventListener('focusout',()=>setTimeout(flushDrawer,0));
 document.addEventListener('pointerdown',()=>{ptrDown=true},true);
 document.addEventListener('pointerup',()=>{ptrDown=false;setTimeout(flushDrawer,0)},true);
@@ -1723,6 +1726,8 @@ $('#modalHost').addEventListener('change',e=>{
 $('#modalHost').addEventListener('click',e=>{
   const t=e.target;
   if(t.id==='mCancel')return closeModal();
+  if(t.id==='nDiscard')return closeModal(true);
+  if(t.id==='nKeep'){$('#nErr').textContent='';return}
   // ปิดเมื่อกดและปล่อยบนพื้นหลังเท่านั้น (ลากคลุมข้อความแล้วปล่อยนอกกรอบ ฟอร์มไม่หาย)
   if(t.id==='modal'){if(modalPress===t)closeModal();return}
   if(t.id==='esPickBtn'){execPickOpen=!execPickOpen;$('#esPickMenu').classList.toggle('hidden',!execPickOpen);return}
