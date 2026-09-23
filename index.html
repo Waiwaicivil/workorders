@@ -76,7 +76,12 @@ a{color:var(--accent)}
 .logoSide{display:none;position:absolute;right:100%;top:0;height:100%;width:180px;margin-right:18px;align-items:center;justify-content:center}
 .logoSide img{width:100%;height:auto;max-height:100%;object-fit:contain}
 @media (min-width:1700px){.logoSide{display:flex}}
-@media print{.logoSide{display:none}}
+/* โลโก้เล็กในแถบบน: ทุกจอที่ไม่มีที่ว่างซ้ายการ์ดสรุป (<1700px) · ใช้รูปเดียวกับ .logoSide (JS คัดลอก src) */
+.logoTop{height:28px;width:auto;flex:none;display:block;border-radius:3px}
+@media (min-width:1700px){.logoTop{display:none}}
+.summary>.logoTile{display:none}
+.logoLogin{height:36px;width:auto;flex:none;display:block;border-radius:4px}
+@media print{.logoSide,.logoTop{display:none}}
 .summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px}
 .tile.static{cursor:default}
 .tile.static:hover{border-color:var(--line)}
@@ -266,6 +271,12 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   .brand>div{min-width:0;flex:1}
   .wsSel{width:100%}
   .brand .mark{width:28px;height:28px;font-size:11px}
+  /* มือถือ: แถบบนไม่มีที่พอ (ชื่อพื้นที่งานจะโดนตัด) → โลโก้ไปอยู่ช่องว่างท้ายการ์ดสรุป (การ์ดคี่ = ช่องขวาว่าง, การ์ดคู่ = แถบเต็มแถว) */
+  .logoTop{display:none}
+  .summary>.logoTile{display:flex;align-items:center;justify-content:center;padding:4px}
+  .summary>.logoTile img{max-width:100%;max-height:64px;width:auto;height:auto;object-fit:contain}
+  .summary>.logoTile:nth-child(odd){grid-column:1/-1}
+  .summary>.logoTile:nth-child(odd) img{max-height:40px}
   .top .spacer,.sync{display:none}
   .seg.nav{grid-area:seg;display:flex}
   .seg.nav button{flex:1;padding:6px 4px;font-size:13px;white-space:nowrap}
@@ -284,6 +295,11 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   .toolbar .field{flex:1 1 45%;min-width:0!important}
   .toolbar .field select,.toolbar .field input{font-size:13.5px;padding:7px 6px}
   .count{flex:1 1 100%;text-align:right}
+  /* แถบตัวกรองหน้าหลัก: ช่องกรอง/เลือกเต็มแถวทุกช่อง ให้อ่านข้อความครบ (ครึ่งแถวตัดคำ) · ปุ่ม 📊 กับ CSV แบ่งครึ่ง */
+  .wrap>.toolbar .field{flex:1 1 100%}
+  #btnExecStats{flex:1 1 45%}
+  .wrap>.toolbar #btnExecStats,.wrap>.toolbar #btnExport{order:1}
+  .wrap>.toolbar .count{order:2}
   .wrap{padding:10px 10px 80px}
   .summary{grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
   .tile{padding:10px 12px}
@@ -302,6 +318,12 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   .dbody{padding:14px 14px 30px}
   .dhead{padding:12px 14px 10px}
   .board{grid-auto-columns:82vw}
+}
+@media (max-width:340px){
+  /* จอ 320: ให้ชื่อ "งานแผนกเฉพาะกิจ" ในแถบบนอ่านได้ครบ */
+  .top{gap:6px}
+  #btnNew{padding:7px 6px}
+  .wsSel{padding-left:5px}
 }
 
 /* ---------- เพิ่ม: สถานะการบันทึก / ไฟล์แนบ / ลิงก์ / พิมพ์ ---------- */
@@ -397,6 +419,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 
 <div class="top">
   <div class="brand">
+    <img class="logoTop" data-logo alt="ไวไว">
     <div class="mark">WO</div>
     <div>
       <select class="wsSel" id="wsSel" title="เลือกพื้นที่งาน"></select>
@@ -459,7 +482,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 <div id="modalHost"></div>
 <div class="login hidden" id="login">
   <form class="box" id="loginForm" autocomplete="on">
-    <div class="head"><div class="mark">📋</div><div><h2>งานแผนกโยธาและเฉพาะกิจ</h2><div class="sub">เข้าสู่ระบบเพื่อใช้งาน</div></div></div>
+    <div class="head"><img class="logoLogin" data-logo alt="ไวไว"><div><h2>งานแผนกโยธาและเฉพาะกิจ</h2><div class="sub">เข้าสู่ระบบเพื่อใช้งาน</div></div></div>
     <div class="f"><label>ชื่อผู้ใช้</label><input id="lUser" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required></div>
     <div class="f"><label>รหัสผ่าน</label><input id="lPass" name="password" type="password" autocomplete="current-password" required></div>
     <div class="err" id="lErr"></div>
@@ -1062,6 +1085,8 @@ function render(){
   renderSummary();renderFilters();renderMain();renderDrawer();renderUnsaved();
   $('#banner').classList.toggle('hidden',!isAdmin()||page!=='active'||!Object.values(items).some(it=>it.example));
 }
+// โลโก้ช่องท้ายการ์ดสรุป (แสดงเฉพาะมือถือ ดู CSS .logoTile) · clone รูปเดิม ไม่ต่อ base64 เป็นสตริงทุกรอบ
+function addLogoTile(){const d=document.createElement('div');d.className='logoTile';d.setAttribute('aria-hidden','true');d.appendChild($('.logoSide img').cloneNode());$('#summary').appendChild(d)}
 function renderSummary(){
   if(page==='archive'){renderArchiveSummary();return}
   const all=Object.values(items).filter(it=>!it.signed);
@@ -1073,6 +1098,7 @@ function renderSummary(){
     {k:'pending',label:'เสร็จแล้ว รอเซ็นรับ',v:all.filter(isPending).length},
   ];
   $('#summary').innerHTML=tiles.map(t=>`<button class="tile ${filters.tile===t.k?'active':''}" data-tile="${t.k}"><span class="k">${t.label}</span><span class="v ${t.v&&t.cls?t.cls:''}">${t.v}</span></button>`).join('');
+  addLogoTile();
 }
 const TH_MONTH=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 // "2026" → "ปี 2569", "2026-09" → "ก.ย. 2569"
@@ -1097,6 +1123,7 @@ function renderArchiveSummary(){
   $('#summary').innerHTML=tiles.map(t=>t.ds
     ?`<button class="tile" data-deptstat="${t.ds}" title="กดดูสัดส่วนรายแผนก"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span><span class="n">${esc(t.n)}</span><span class="go">ดูแผนภูมิรายแผนก ›</span></button>`
     :`<div class="tile static"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span><span class="n">${esc(t.n)}</span></div>`).join('');
+  addLogoTile();
 }
 /* ---------- สัดส่วนงานรายแผนก (แผนภูมิวงกลม + 10 อันดับ) ---------- */
 const PIE_COLORS=['#1F5AA6','#D9822B','#2E8B6E','#B8434E','#7B5EA7'],PIE_OTHER='#8C97A5';
@@ -1626,6 +1653,12 @@ function closeModal(force){const m=$('#modal');if(m&&m.hasAttribute('data-forced
   if(!force&&$('#nTitle')&&newFormDirty()){const e=$('#nErr');if(e){e.innerHTML='<span style="display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center"><span>ยังไม่ได้สร้างใบงาน ข้อมูลที่พิมพ์จะหาย</span><span style="display:inline-flex;gap:6px"><button class="btn sm danger" id="nDiscard">ปิดทิ้ง</button><button class="btn sm" id="nKeep">กรอกต่อ</button></span></span>';$('#nKeep').focus()}return}execPickOpen=false;$('#modalHost').innerHTML='';if(comboInput&&!comboInput.isConnected)comboClose()}
 
 /* ---------- events ---------- */
+// มือถือ: ช่องค้นหาแคบ ใช้คำอธิบายสั้น (ครอบคลุมช่องเดิมครบ)
+(()=>{const q=$('#q'),full=q.placeholder,mq=matchMedia('(max-width:760px)');
+  const f=()=>{q.placeholder=mq.matches?'ค้นหา เลขที่/PR-PO/หัวข้อ/สถานที่/ผู้ขอ':full};f();
+  if(mq.addEventListener)mq.addEventListener('change',f);else if(mq.addListener)mq.addListener(f)})();
+// โลโก้ฝังไว้ที่ .logoSide ที่เดียว แล้วคัดลอกไปรูปอื่น (ไม่ฝัง base64 ซ้ำ)
+document.querySelectorAll('img[data-logo]').forEach(i=>{i.src=$('.logoSide img').src});
 function applyWs(){
   const sel=$('#wsSel');
   sel.innerHTML=Object.keys(WORKSPACES).map(k=>`<option value="${k}">${esc(WORKSPACES[k].name)}</option>`).join('');
