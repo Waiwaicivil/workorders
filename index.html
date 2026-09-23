@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="5d4b976e73";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -444,6 +444,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     <span>ตอนนี้มี <b>ข้อมูลตัวอย่าง</b> อยู่ในชีท เพื่อให้เห็นหน้าตาระบบ เมื่อเริ่มใช้จริงกดลบได้เลย</span>
     <button class="btn sm" id="btnClearExamples">ลบข้อมูลตัวอย่างทั้งหมด</button>
   </div>
+  <div class="banner hidden" id="updBanner">
+    <span>มีเวอร์ชันใหม่ของระบบ</span>
+    <button class="btn sm" id="btnUpdate">โหลดเวอร์ชันใหม่</button>
+  </div>
   <div class="banner warn hidden" id="unsavedBanner">
     <span id="unsavedText">มีรายการที่ยังบันทึกไม่สำเร็จ</span>
     <button class="btn sm" id="btnRetryAll">ลองบันทึกอีกครั้ง</button>
@@ -779,6 +783,10 @@ function initStore(){
   ['pointerdown','keydown','wheel','touchstart','scroll'].forEach(t=>addEventListener(t,()=>{const was=Date.now()-lastAct>IDLE_AFTER;lastAct=Date.now();
     if(was&&session&&document.visibilityState==='visible'){lastPoll=lastAct;refresh(true,{poll:true})}},{passive:true,capture:true}));
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&session)refresh(true,{poll:true})});
+  setInterval(()=>{if(document.visibilityState==='visible')checkBuild(false)},5*60000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkBuild(true)});
+  $('#btnUpdate').addEventListener('click',()=>{if(hasPendingWork()){toast('รอบันทึกหรืออัปโหลดให้เสร็จก่อน แล้วกดอีกครั้ง',true);return}doUpdate(false)});
+  checkBuild(false);
   if(!session){showLogin('');return}
   refresh(false).then(()=>{if(session&&session.user.mustChange)showUserModal(true)});
 }
@@ -884,6 +892,23 @@ async function saveNow(id,attempt){
 const FIELD_TH={no:'เลขที่',title:'หัวข้องาน',dept:'แผนกที่ขอ',type:'ประเภทงาน',priority:'ความสำคัญ',status:'สถานะ',requester:'ผู้ขอ',location:'สถานที่',received:'วันรับใบงาน',start:'วันเริ่มงาน',due:'กำหนดเสร็จ',finished:'วันเสร็จจริง',progress:'ความคืบหน้า',detail:'รายละเอียด',assignee:'ผู้รับผิดชอบ',budget:'งบ',contractor:'ผู้รับเหมา',poRef:'PR/PO',signed:'เซ็นรับ'};
 function retryAll(){Object.keys(dirty).forEach(id=>{if(dirty[id]&&Object.keys(dirty[id]).length&&findItem(id)&&!saving[id])saveNow(id,0)})}
 function hasUnsaved(){return Object.keys(writeTimers).length>0||Object.keys(saving).some(k=>saving[k])||Object.keys(dirty).some(k=>dirty[k]&&Object.keys(dirty[k]).length&&findItem(k))}
+/* ---------- เวอร์ชันใหม่หลัง deploy (เฉพาะหน้า GitHub Pages ที่มี window.BUILD) ----------
+   เช็ค version.json (ไฟล์บน Pages ไม่ใช้โควตา Apps Script) ทุก 5 นาที + ตอนกลับมาที่แท็บ · ไม่ตรง = ขึ้นแถบ
+   โหลดใหม่เองเมื่อปลอดภัย: ไม่มีงานค้างบันทึก/อัปโหลด, ไม่มีหน้าต่าง/ฟอร์มเปิด, ไม่มีบันทึกที่พิมพ์ค้าง และ (แท็บเพิ่งกลับมา หรือไม่มีคนแตะเกิน 15 นาที) */
+let newBuild='';
+function updateSafe(){return !hasPendingWork()&&!$('#modal')&&!Object.keys(logDraft).some(k=>String(logDraft[k]||'').trim())
+  &&($('#login').classList.contains('hidden')||!($('#lUser').value||$('#lPass').value))}
+// โหลดเองได้ครั้งเดียวต่อ build (CDN ของ Pages อาจยังส่งหน้าเก่าได้ถึง ~10 นาที กันรีโหลดวน) · กดปุ่มเองได้เสมอ
+function autoTried(){try{return sessionStorage.getItem('wo-upd')===newBuild}catch(e){return true}}
+function doUpdate(auto){if(auto){if(autoTried())return;try{sessionStorage.setItem('wo-upd',newBuild)}catch(e){return}}
+  location.replace(location.pathname+'?v='+encodeURIComponent(newBuild)+location.hash)}
+async function checkBuild(resumed){
+  if(!window.BUILD)return;
+  try{const r=await fetch('version.json?t='+Date.now(),{cache:'no-store'});if(!r.ok)return;const j=await r.json();
+    if(!j||!j.build||j.build===window.BUILD)return;newBuild=j.build}catch(e){return}
+  $('#updBanner').classList.remove('hidden');
+  if(updateSafe()&&(resumed||Date.now()-lastAct>IDLE_AFTER))doUpdate(true);
+}
 function hasPendingWork(){return hasUnsaved()||pendingLogs>0||Object.keys(uploading).length>0||Object.keys(uploadQ).length>0}
 window.addEventListener('beforeunload',e=>{if(hasPendingWork()){e.preventDefault();e.returnValue='ยังบันทึกไม่เสร็จ';return e.returnValue}});
 function renderUnsaved(){
