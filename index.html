@@ -129,6 +129,9 @@ a{color:var(--accent)}
 .pri.p1{color:var(--s-red-fg)}
 .pri.p2{color:var(--s-amber-fg)}
 .pri.p3{color:var(--faint)}
+/* หัวข้องานตามความสำคัญ (หน้างานปัจจุบัน): ด่วน = ส้ม · ด่วนมาก = แดง (ตาราง / การ์ดมือถือ / บอร์ด) */
+.tp2{color:#D9480F}
+.tp1{color:#C92A2A}
 .dept{font-size:14px;color:var(--text)}
 
 /* ---------- table ---------- */
@@ -535,6 +538,7 @@ let refreshing=false, refreshStartedAt=0, refreshPromise=null, lastLoadError='';
 let drawerStale=false, ptrDown=false, pendingLogs=0, newItemId=null;
 // เวอร์ชันข้อมูลที่ถืออยู่ (ส่งไปเช็คตอนรีเฟรชอัตโนมัติ) และประวัติการแก้ไขที่เปิดดูแล้ว
 const dataVer={active:'',archive:''}, fullAt={active:0,archive:0}, histCache={};
+const IDLE_AFTER=15*60000,IDLE_POLL=10*60000;let lastAct=Date.now(),lastPoll=0; // จอเปิดค้างไม่มีคนใช้ เช็คห่างลง (โควตา Apps Script)
 const FULL_EVERY=10*60000; // อ่านข้อมูลเต็มอย่างน้อยทุก 10 นาที เผื่อมีคนแก้ในชีทโดยตรง
 function resetDataVer(){dataVer.active=dataVer.archive='';fullAt.active=fullAt.archive=0;Object.keys(histCache).forEach(k=>delete histCache[k])}
 const serverSnap={};
@@ -768,7 +772,12 @@ function initStore(){
   applyWs();
   loadSession();renderUser();
   $('#loginForm').addEventListener('submit',doLogin);
-  setInterval(()=>{if(document.visibilityState==='visible'&&session)refresh(true,{poll:true})},60000);
+  // เช็คข้อมูลใหม่ทุก 60 วิ · ไม่มีคนแตะ/พิมพ์/เลื่อนเกิน IDLE_AFTER (จอเปิดค้าง) → ทุก IDLE_POLL · กลับมาใช้ = เช็คทันที
+  setInterval(()=>{if(document.visibilityState!=='visible'||!session)return;
+    const now=Date.now();if(now-lastAct>IDLE_AFTER&&now-lastPoll<IDLE_POLL)return;
+    lastPoll=now;refresh(true,{poll:true})},60000);
+  ['pointerdown','keydown','wheel','touchstart','scroll'].forEach(t=>addEventListener(t,()=>{const was=Date.now()-lastAct>IDLE_AFTER;lastAct=Date.now();
+    if(was&&session&&document.visibilityState==='visible'){lastPoll=lastAct;refresh(true,{poll:true})}},{passive:true,capture:true}));
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&session)refresh(true,{poll:true})});
   if(!session){showLogin('');return}
   refresh(false).then(()=>{if(session&&session.user.mustChange)showUserModal(true)});
@@ -1276,13 +1285,13 @@ function renderMain(){
   if(view==='board'){renderBoard(main,arr);return}
   if(!arr.length){main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ไม่มีใบงานในมุมมองนี้</b>ลองเปลี่ยนตัวกรอง${canEdit()?' หรือกด “ใบงานใหม่” เพื่อเพิ่ม':''}</div></div>`;return}
   const rows=arr.map(it=>{
-    const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);const p=priOf(it.priority);
+    const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);
     return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}${it.example?' <span class="chip outline" style="font-size:10.5px;padding:0 6px">ตัวอย่าง</span>':''}${it.files&&it.files.length?' <span title="มีไฟล์แนบ '+it.files.length+' ไฟล์">📎</span>':''}</td>
-      <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||it.type||'')}${it.assignee?' · '+esc(execOf(it)):''}</div></td>
+      <td class="title"><span class="${tpCls(it)}">${esc(it.title||'(ไม่มีชื่อ)')}</span><div class="sub">${esc(it.location||it.type||'')}${it.assignee?' · '+esc(execOf(it)):''}</div></td>
       <td class="dept">${esc(it.dept||'—')}</td>
       <td>${chipStatus(it.status,it)}</td>
-      <td><span class="pri ${p.id}">${esc(p.name)}</span></td>
+      <td class="date mono">${fmtD(it.received)}</td>
       <td class="date mono">${fmtD(it.start)}</td>
       <td class="date"><span class="due ${over?'over':soon?'soon':''}"><span class="mono">${fmtD(it.due)}</span>${dl?`<small>${esc(dl)}</small>`:''}</span></td>
       <td><span class="bar ${it.status==='done'?'done':''}"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></td>
@@ -1291,12 +1300,12 @@ function renderMain(){
     const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);const p=priOf(it.priority);
     return `<div class="card" data-id="${esc(it.id)}">
       <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}${it.files&&it.files.length?' 📎':''}</span>${chipStatus(it.status,it)}</div>
-      <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
+      <div class="t ${tpCls(it)}">${esc(it.title||'(ไม่มีชื่อ)')}</div>
       <div class="meta"><span>${esc(it.dept||'—')}</span><span class="pri ${p.id}">${esc(p.name)}</span></div>
       <div class="row"><span class="due ${over?'over':soon?'soon':''}"><span style="font-size:12.5px">กำหนดเสร็จ <span class="mono">${fmtD(it.due)}</span></span>${dl?`<small>${esc(dl)}</small>`:''}</span><span><span class="bar ${it.status==='done'?'done':''}" style="width:70px"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></span></div>
     </div>`}).join('');
   main.innerHTML=`<div class="tablewrap"><table>
-    <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>สถานะ</th><th>ความสำคัญ</th><th>วันเริ่ม</th><th>กำหนดเสร็จ</th><th>คืบหน้า</th></tr></thead>
+    <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>สถานะ</th><th>วันที่รับเรื่อง</th><th>วันเริ่ม</th><th>กำหนดเสร็จ</th><th>คืบหน้า</th></tr></thead>
     <tbody>${rows}</tbody></table></div><div class="cards">${cards}</div>`;
 }
 function renderArchive(main,arr){
@@ -1322,6 +1331,7 @@ function renderArchive(main,arr){
     <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>ประเภทงาน</th><th>วันรับเรื่อง</th><th>วันเสร็จจริง</th><th>วันเซ็นรับ</th><th>ใช้เวลา (วัน)</th></tr></thead>
     <tbody>${rows}</tbody></table></div><div class="cards">${cards}</div>`;
 }
+function tpCls(it){return it.priority==='p1'?'tp1':it.priority==='p2'?'tp2':''}
 function renderBoard(main,arr){
   const cols=STATUSES.map(s=>{
     const list=arr.filter(it=>it.status===s.id);
@@ -1329,7 +1339,7 @@ function renderBoard(main,arr){
       const over=isOverdue(it),soon=isSoon(it);
       return `<div class="kcard" draggable="${canEdit()?'true':'false'}" data-id="${esc(it.id)}">
         <div class="no mono">${esc(it.no||'—')} · <span class="pri ${it.priority||'p3'}">${esc(priOf(it.priority).name)}</span></div>
-        <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
+        <div class="t ${tpCls(it)}">${esc(it.title||'(ไม่มีชื่อ)')}</div>
         <div class="m"><span>${esc(it.dept||'')}</span><span class="due ${over?'over':soon?'soon':''}"><small class="mono" style="font-size:11.5px">${fmtD(it.due)}</small></span></div>
         ${canEditItem(it)?`<select class="kstatus" data-kid="${esc(it.id)}" title="เปลี่ยนสถานะ">${STATUSES.map(x=>`<option value="${x.id}" ${x.id===it.status?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:''}
       </div>`}).join('');
