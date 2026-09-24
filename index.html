@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="5d4b976e73";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="d12a40fd60";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -336,6 +336,8 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
 .savestate.retry{color:var(--s-amber-fg)}
 .savestate.error{color:var(--danger);font-weight:600}
 .banner.warn{background:var(--s-red-bg);color:var(--s-red-fg)}
+#alertBanner{flex-direction:column;align-items:stretch;gap:6px}
+.alertrow{display:flex;gap:10px;align-items:center;justify-content:space-between}
 .files{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
 .files li{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2)}
 .files li a{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--accent);text-decoration:none}
@@ -448,6 +450,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     <span>มีเวอร์ชันใหม่ของระบบ</span>
     <button class="btn sm" id="btnUpdate">โหลดเวอร์ชันใหม่</button>
   </div>
+  <div class="banner warn hidden" id="alertBanner"></div>
   <div class="banner warn hidden" id="unsavedBanner">
     <span id="unsavedText">มีรายการที่ยังบันทึกไม่สำเร็จ</span>
     <button class="btn sm" id="btnRetryAll">ลองบันทึกอีกครั้ง</button>
@@ -734,6 +737,7 @@ async function refreshRun(silent,gen,poll){
     lastReadTime=r.serverTime||Date.now();
     if(r.me&&session){session.user=r.me;saveSession();renderUser()}
     if(r.digest)digest=r.digest;
+    renderAlerts(r.alerts||[]);
     if(!r.unchanged){
       if(r.settings)settings=Object.assign(clone(DEFAULT_SETTINGS),r.settings);
       applyServer(r.items,'active',lastReadTime);
@@ -909,6 +913,17 @@ async function checkBuild(resumed){
   $('#updBanner').classList.remove('hidden');
   if(updateSafe()&&(resumed||Date.now()-lastAct>IDLE_AFTER))doUpdate(true);
 }
+/* ---------- คำเตือนผู้ดูแลระบบ (server ส่งมากับ getAll เฉพาะ admin): สำรองข้อมูลล้ม/ขาด, Drive ใกล้เต็ม ----------
+   กด "ปิด" = ซ่อนข้อความนั้นถึงสิ้นวัน (จำในเครื่อง) พรุ่งนี้ถ้ายังเป็นอยู่จะขึ้นอีก */
+function alertHidden(a){try{return localStorage.getItem('wo-alert-'+a.k)===todayISO()}catch(e){return false}}
+function renderAlerts(list){
+  const b=$('#alertBanner');if(!b)return;const show=(list||[]).filter(a=>a&&a.k&&!alertHidden(a));
+  b.classList.toggle('hidden',!show.length);
+  b.innerHTML=show.map(a=>`<div class="alertrow"><span>⚠ ${esc(a.text)}</span><button class="btn sm" data-alertoff="${esc(a.k)}">ปิด</button></div>`).join('');
+}
+document.addEventListener('click',e=>{const t=e.target.closest('[data-alertoff]');if(!t)return;
+  try{localStorage.setItem('wo-alert-'+t.dataset.alertoff,todayISO())}catch(x){}
+  t.closest('.alertrow').remove();if(!$('#alertBanner').children.length)$('#alertBanner').classList.add('hidden')});
 function hasPendingWork(){return hasUnsaved()||pendingLogs>0||Object.keys(uploading).length>0||Object.keys(uploadQ).length>0}
 window.addEventListener('beforeunload',e=>{if(hasPendingWork()){e.preventDefault();e.returnValue='ยังบันทึกไม่เสร็จ';return e.returnValue}});
 function renderUnsaved(){
@@ -1679,7 +1694,12 @@ async function loadBackupInto(){
 function renderBackup(b){
   const st=$('#backupState'),ac=$('#backupActions');if(!st||!ac)return;
   const last=b.last?`สำรองล่าสุด ${fmtDT(b.last.at)} · <a href="${esc(safeUrl(b.last.url))}" target="_blank" rel="noopener noreferrer">เปิดไฟล์สำรอง</a> · มีสำเนาเก็บไว้ ${Number(b.last.kept)||0} ไฟล์`:'ยังไม่เคยสำรอง';
-  st.innerHTML=(b.enabled?`<b style="color:var(--s-green-fg)">เปิดอยู่</b> สำรองทุกวันเวลา ${String(b.hour).padStart(2,'0')}:00`:'<b style="color:var(--danger)">ปิดอยู่</b>')+' · '+last;
+  const gb=x=>(x/1073741824).toFixed(1),sg=b.storage;
+  const stor=sg&&sg.limit>0?`<div style="margin-top:4px">พื้นที่ Google Drive ของเจ้าของระบบ: <b style="color:${sg.pct>=80?'var(--danger)':'inherit'}">${gb(sg.used)} จาก ${gb(sg.limit)} GB (${sg.pct}%)</b>${sg.pct>=80?' — ใกล้เต็ม ถ้าเต็มจะบันทึกใบงานและแนบไฟล์ไม่ได้':''}</div>`:'';
+  const keep=b.keepMonths?`<div style="margin-top:4px;color:var(--muted);font-size:13px">เก็บสำเนาทุกวันย้อนหลัง ${b.keepDays} วัน + เดือนละ 1 ฉบับย้อนหลัง ${b.keepMonths} เดือน · สำรองไม่สำเร็จหรือ Drive ใช้เกิน 80% จะส่งอีเมลเตือนเจ้าของระบบและผู้ดูแลระบบที่มีอีเมล</div>`:'';
+  const al=(b.alerts||[]).filter(a=>a.k!=='storage').map(a=>`<div style="margin-top:4px;color:var(--danger)">⚠ ${esc(a.text)}</div>`).join('');
+  st.innerHTML=(b.enabled?`<b style="color:var(--s-green-fg)">เปิดอยู่</b> สำรองทุกวันเวลา ${String(b.hour).padStart(2,'0')}:00`:'<b style="color:var(--danger)">ปิดอยู่</b>')+' · '+last+al+stor+keep;
+  if(b.alerts)renderAlerts(b.alerts);
   ac.innerHTML=`<button class="btn primary" id="backupNow">สำรองตอนนี้</button>${b.enabled?'<button class="btn" id="backupOff">ปิดการสำรองอัตโนมัติ</button>':'<button class="btn" id="backupOn">เปิดการสำรองอัตโนมัติ</button>'}`;
 }
 // ฟอร์มใบงานใหม่ที่มีข้อความพิมพ์ค้าง: กด Esc / คลิกพื้นหลัง / ยกเลิก จะถามก่อน (แถบในฟอร์ม ไม่ใช้ dialog ของเบราว์เซอร์) กันข้อมูลหายเพราะมือลั่น
