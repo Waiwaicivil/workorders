@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="e32e8ba545";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="596435df7e";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1027,10 +1027,12 @@ function signItem(id,on){
   if(!canSign()){toast('เฉพาะผู้ที่มีสิทธิ์เซ็นรับงานเท่านั้นที่ติ๊กได้');renderDrawer();return}
   const it=findItem(id);if(!it)return;
   const f={signed:!!on,signedAt:on?todayISO():'',signedBy:on?me():''};
-  if(on){f.status='done';f.progress=100;if(!it.finished)f.finished=todayISO()}
+  // v57: ใบ "ยกเลิก" เซ็นรับได้โดยคงสถานะยกเลิก (ไม่กลายเป็นเสร็จแล้ว 100% ไม่นับในสถิติงานเสร็จ)
+  const cancel=it.status==='cancel';
+  if(on&&!cancel){f.status='done';f.progress=100;if(!it.finished)f.finished=todayISO()}
   patch(id,f);
-  addLogEntry(id,on?'เซ็นรับงานแล้ว':'ยกเลิกการเซ็นรับงาน',on?'done':it.status);
-  toast(on?'บันทึกเซ็นรับแล้ว ย้ายไปคลังงานที่เซ็นแล้ว':'ยกเลิกเซ็นรับ กลับมาอยู่ในงานปัจจุบัน');
+  addLogEntry(id,on?(cancel?'เซ็นรับงานแล้ว (งานยกเลิก)':'เซ็นรับงานแล้ว'):'ยกเลิกการเซ็นรับงาน',on&&!cancel?'done':it.status);
+  toast(on?(cancel?'บันทึกเซ็นรับงานยกเลิกแล้ว ย้ายไปคลัง (ไม่นับเป็นงานเสร็จ)':'บันทึกเซ็นรับแล้ว ย้ายไปคลังงานที่เซ็นแล้ว'):'ยกเลิกเซ็นรับ กลับมาอยู่ในงานปัจจุบัน');
 }
 
 /* ---------- ไฟล์แนบ (เก็บในไดรฟ์เจ้าของ ไม่แชร์สาธารณะ เปิดผ่านแอปหลังล็อกอิน) ---------- */
@@ -1207,12 +1209,13 @@ function renderArchiveSummary(){
   const inPeriod=p?all.filter(it=>String(it.signedAt||'').startsWith(p)):all;
   const signedIn=pre=>all.filter(it=>String(it.signedAt||'').startsWith(pre)).length;
   const sPre=p||todayISO().slice(0,7),sYear=sPre.slice(0,4);
-  const ds=all.map(it=>daysBetween(it.received,it.signedAt)).filter(d=>d!=null&&d>=0);
+  const nCancel=all.filter(it=>it.status==='cancel').length;
+  const ds=all.filter(it=>it.status!=='cancel').map(it=>daysBetween(it.received,it.signedAt)).filter(d=>d!=null&&d>=0); // งานยกเลิกไม่นับในระยะเวลาเฉลี่ย
   const avg=ds.length?Math.round(ds.reduce((a,b)=>a+b,0)/ds.length):null;
   const byDept={};inPeriod.forEach(it=>{const d=it.dept||'ไม่ระบุ';byDept[d]=(byDept[d]||0)+1});
   const top=Object.entries(byDept).sort((a,b)=>b[1]-a[1])[0];
   const tiles=[
-    {label:'งานที่เซ็นรับแล้วทั้งหมด',v:all.length,n:'ใบงาน'},
+    {label:'งานที่เซ็นรับแล้วทั้งหมด',v:all.length,n:'ใบงาน'+(nCancel?' · ในนี้เป็นงานยกเลิก '+nCancel+' ใบ':'')},
     {label:p?'เซ็นรับ '+pt:'เซ็นรับเดือนนี้',v:signedIn(sPre),n:sPre.length===4?'ใบงาน':'ทั้งปี '+(+sYear+543)+' เซ็นรับ '+signedIn(sYear)+' ใบงาน'},
     {label:'ระยะเวลาเฉลี่ย รับเรื่อง → เซ็นรับ',v:avg==null?'—':avg,n:avg==null?'ยังไม่มีข้อมูล':'วัน'},
     {label:'แผนกที่ขอมากที่สุด'+(p?' · เซ็นรับ '+pt:''),v:top?top[1]:'—',n:top?top[0]:'ยังไม่มีข้อมูล',ds:'signed'},
@@ -1315,7 +1318,7 @@ function inPeriod(it){const r=String(it.received||'');return r.startsWith(execPe
 function execStats(pred,usePeriod){
   const all=Object.values(items).concat(Object.values(archive)).filter(pred);
   const m=todayISO().slice(0,7);
-  return {total:all.length,month:all.filter(it=>usePeriod?inPeriod(it):String(it.received||'').startsWith(m)).length,open:all.filter(it=>!it.signed&&!CLOSED.has(it.status)).length,pending:all.filter(isPending).length,signed:all.filter(it=>it.signed).length,over:all.filter(isOverdue).length};
+  return {total:all.length,month:all.filter(it=>usePeriod?inPeriod(it):String(it.received||'').startsWith(m)).length,open:all.filter(it=>!it.signed&&!CLOSED.has(it.status)).length,pending:all.filter(isPending).length,signed:all.filter(it=>it.signed&&it.status!=='cancel').length,over:all.filter(isOverdue).length};
 }
 function renderExecStrip(){
   let el=$('#execStrip');
@@ -1413,7 +1416,7 @@ function renderArchive(main,all){
   if(!all.length){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ยังไม่มีงานที่เซ็นรับในมุมมองนี้</b>เมื่อผู้มีสิทธิ์เซ็นรับงานติ๊ก “เซ็นรับงานแล้ว” ในใบงาน งานจะย้ายมาที่นี่</div></div>';return}
   const rows=mob?'':arr.map(it=>{const d=daysBetween(it.received,it.signedAt);return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}</td>
-      <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||'')}</div></td>
+      <td class="title">${it.status==='cancel'?'<span class="chip red" style="margin-right:6px">ยกเลิก</span>':''}${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||'')}</div></td>
       <td class="dept">${esc(it.dept||'—')}</td>
       <td class="dept">${esc(it.type||'—')}</td>
       <td class="date mono">${fmtD(it.received)}</td>
@@ -1422,7 +1425,7 @@ function renderArchive(main,all){
       <td class="mono" style="text-align:right">${d==null?'—':d}</td>
     </tr>`}).join('');
   const cards=!mob?'':arr.map(it=>`<div class="card" data-id="${esc(it.id)}">
-      <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}</span><span class="chip green">เซ็นรับ ${fmtD(it.signedAt)}</span></div>
+      <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}</span>${it.status==='cancel'?`<span class="chip red">ยกเลิก · เซ็นรับ ${fmtD(it.signedAt)}</span>`:`<span class="chip green">เซ็นรับ ${fmtD(it.signedAt)}</span>`}</div>
       <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
       <div class="meta"><span>${esc(it.dept||'—')}</span><span>${esc(it.type||'')}</span></div>
       <div class="meta"><span>รับเรื่อง ${fmtD(it.received)}</span><span>เสร็จ ${fmtD(it.finished)}</span></div>
