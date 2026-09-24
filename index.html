@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="c3ed6e2648";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="ce316a3b42";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -747,6 +747,7 @@ async function refreshRun(silent,gen,poll){
     const wasReady=mode==='sheet';
     mode='sheet';setSync(true,'เชื่อมกับ Google Sheet แล้ว');
     if(!r.unchanged||!wasReady)renderBg();
+    if(!r.unchanged)restoreOutbox();else retryFailed();
     if(page==='archive')loadArchive(false,{poll:true});
   }catch(e){
     if(gen!==wsGen)return;
@@ -770,7 +771,7 @@ async function loadArchiveRun(gen,poll){
     const useVer=poll&&archiveLoadedAt&&dataVer.archive&&Date.now()-fullAt.archive<FULL_EVERY;
     const r=await gs('getAll',{archive:true,ver:useVer?dataVer.archive:''});
     if(gen!==wsGen)return;
-    archiveLoadedAt=Date.now();
+    archiveLoadedAt=Date.now();setTimeout(applyOutbox,0);
     if(r.unchanged)return;
     applyServer(r.items,'archive',r.serverTime||Date.now());dataVer.archive=r.ver||'';fullAt.archive=Date.now();
     if(page==='archive'){mode='sheet';renderBg()}else{renderFilters()}
@@ -797,7 +798,46 @@ function initStore(){
 }
 
 /* ---------- บันทึก (คิว + retry + กันเขียนทับ) ---------- */
-function setSaveState(id,state,msg){saveState[id]={state,msg,at:Date.now()};renderSaveState();renderUnsaved()}
+function setSaveState(id,state,msg){saveState[id]={state,msg,at:Date.now()};renderSaveState();renderUnsaved();persistOutbox()}
+/* ---------- งานค้างบันทึกเก็บในเครื่อง (v54) ----------
+   มือถือ: สัญญาณหลุด → บันทึกไม่สำเร็จ แล้ว iOS ปิดหน้าทิ้ง = งานหาย · เก็บช่องที่แก้ (dirty+inflight) + base + บันทึกที่พิมพ์ค้าง
+   ลง localStorage แยกตามผู้ใช้ ('wo-outbox-<user>') และพื้นที่งาน ทุกครั้งที่สถานะบันทึกเปลี่ยน · เปิดหน้าใหม่ → กู้คืนแล้วบันทึกต่อเอง
+   (base เดิมทำให้ server ตรวจชนกับคนอื่นได้ตามปกติ) · เน็ตกลับมา / กลับเข้าแอป / poll สำเร็จ → ลองบันทึกใบที่ค้างใหม่ */
+const outboxRestored={};
+function outboxKey(){return session&&session.user?'wo-outbox-'+String(session.user.username).toLowerCase():''}
+function readOutbox(){try{return JSON.parse(localStorage.getItem(outboxKey())||'{}')||{}}catch(e){return {}}}
+function persistOutbox(){
+  const k=outboxKey();if(!k||!outboxRestored[ws])return; // ยังไม่ได้กู้ของพื้นที่งานนี้ = ห้ามเขียนทับ
+  const box=readOutbox(),its={},logs={},old=box[ws]||{},keep=Date.now()-7*86400000;
+  // ใบที่ไม่ได้อยู่ในหน่วยความจำตอนนี้ (เช่นใบในคลังที่ยังไม่โหลด) เก็บของเดิมไว้ ไม่เกิน 7 วัน
+  Object.keys(old.items||{}).forEach(id=>{const e=old.items[id];if(!findItem(id)&&e&&(e.t||0)>keep)its[id]=e});
+  Object.keys(old.logs||{}).forEach(id=>{const e=old.logs[id];if(!findItem(id)&&e&&(e.t||0)>keep)logs[id]=e});
+  Object.keys(dirty).concat(Object.keys(inflight)).forEach(id=>{const f=Object.assign({},inflight[id]||{},dirty[id]||{});const it=findItem(id);
+    if(it&&Object.keys(f).length)its[id]={f,b:base[id]||0,no:it.no||'',t:Date.now()}});
+  Object.keys(logDraft).forEach(id=>{const t=String(logDraft[id]||'');if(t.trim()&&findItem(id))logs[id]={text:t,t:Date.now()}});
+  if(Object.keys(its).length||Object.keys(logs).length)box[ws]={items:its,logs,at:Date.now()};else delete box[ws];
+  try{if(Object.keys(box).length)localStorage.setItem(k,JSON.stringify(box));else localStorage.removeItem(k)}catch(e){}
+}
+function restoreOutbox(){
+  if(outboxRestored[ws]||!outboxKey())return;outboxRestored[ws]=true;applyOutbox()}
+// วางงานค้างที่เก็บไว้ลงใบที่อยู่ในหน่วยความจำ (เรียกซ้ำได้ตอนโหลดคลัง: ใบที่มีงานค้างอยู่แล้วข้าม)
+function applyOutbox(){
+  if(!outboxRestored[ws]||!outboxKey())return;
+  const box=readOutbox()[ws];if(!box){persistOutbox();return}
+  let n=0;
+  Object.keys(box.items||{}).forEach(id=>{const e=box.items[id],it=findItem(id);
+    if(!it||saving[id]||(dirty[id]&&Object.keys(dirty[id]).length)||!e||!e.f)return;
+    Object.assign(it,e.f);dirty[id]=Object.assign({},e.f);if(e.b)base[id]=e.b;n++});
+  Object.keys(box.logs||{}).forEach(id=>{const e=box.logs[id];if(findItem(id)&&e&&e.text&&!String(logDraft[id]||'').trim())logDraft[id]=e.text});
+  persistOutbox();
+  if(n){toast('พบงานที่ยังไม่ได้บันทึกจากครั้งก่อน '+n+' ใบ กำลังบันทึกต่อ…');render();retryAll()}
+  else if(box.logs&&Object.keys(box.logs).length)renderDrawerBg();
+}
+// ลองบันทึกใบที่ค้าง (สถานะ error) ใหม่ · ไม่ยุ่งกับใบที่กำลังบันทึก/รอพิมพ์
+function retryFailed(){if(!session)return;Object.keys(saveState).forEach(id=>{if(saveState[id].state==='error'&&dirty[id]&&Object.keys(dirty[id]).length&&findItem(id)&&!saving[id]&&!writeTimers[id])saveNow(id,0)})}
+addEventListener('online',()=>{retryFailed()});
+addEventListener('pagehide',()=>{persistOutbox()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persistOutbox();else retryFailed()});
 function patch(id,fields,opts){
   opts=opts||{};
   // ผู้มีสิทธิ์เซ็นรับแตะใบที่เซ็นแล้วได้เฉพาะตอนยกเลิกเซ็นรับ (ตรงกับ saveItem ฝั่งเซิร์ฟเวอร์)
@@ -954,7 +994,7 @@ function addLogEntry(id,text,status){
     if(!/^เปลี่ยนสถานะ|^เซ็นรับ|^ยกเลิกการเซ็น|^รับใบงาน$/.test(text)){
       // คืนข้อความให้พิมพ์ส่งใหม่ โดยไม่ทับสิ่งที่พิมพ์ต่อไว้แล้ว
       const ta=openId===id?$('#logText'):null;const typed=ta?ta.value:(logDraft[id]||'');
-      const merged=typed.trim()?text+'\n'+typed:text;logDraft[id]=merged;if(ta)ta.value=merged;
+      const merged=typed.trim()?text+'\n'+typed:text;logDraft[id]=merged;if(ta)ta.value=merged;persistOutbox();
     }
     toast('บันทึกความคืบหน้าไม่สำเร็จ: '+cleanMsg(errMsg(e)),true);renderDrawerBg();
   }).then(()=>{pendingLogs=Math.max(0,pendingLogs-1)});
@@ -1784,7 +1824,7 @@ $('#main').addEventListener('dragend',()=>{dragId=null;$$('.col.over').forEach(c
 const drawer=$('#drawer');
 drawer.addEventListener('input',e=>{
   const t=e.target;
-  if(t.id==='logText'){logDraft[openId]=t.value;return}
+  if(t.id==='logText'){logDraft[openId]=t.value;persistOutbox();return}
   const f=t.dataset.f;if(!f||!openId)return;
   if(t.type==='checkbox')return;
   let v=t.value;
@@ -1812,7 +1852,7 @@ drawer.addEventListener('click',e=>{
   if(t.id==='dDeleteYes'){const id=openId;openId=null;confirmDelete=false;removeItem(id);toast(isAdmin()?'ย้ายไปถังขยะแล้ว กู้คืนได้ที่ ⚙ ภายใน 7 วัน':'ย้ายไปถังขยะแล้ว ถ้าลบผิด แจ้งผู้ดูแลระบบให้กู้คืนภายใน 7 วัน',true);return}
   if(t.id==='logAdd'){
     const ta=$('#logText');const text=(ta.value||'').trim();if(!text){ta.focus();return}
-    logDraft[openId]='';addLogEntry(openId,text);return;
+    logDraft[openId]='';persistOutbox();addLogEntry(openId,text);return;
   }
   if(t.dataset.del){
     if(t.dataset.confirm!=='1'){t.dataset.confirm='1';t.textContent='ยืนยันลบ?';t.classList.add('confirm');setTimeout(()=>{if(t.isConnected){t.dataset.confirm='';t.textContent='ลบ';t.classList.remove('confirm')}},4000);return}
