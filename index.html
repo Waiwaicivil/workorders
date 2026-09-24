@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="fddad82b6f";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="b5193690c9";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -275,12 +275,10 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   .brand>div{min-width:0;flex:1}
   .wsSel{width:100%}
   .brand .mark{width:28px;height:28px;font-size:11px}
-  /* มือถือ: แถบบนไม่มีที่พอ (ชื่อพื้นที่งานจะโดนตัด) → โลโก้ไปอยู่ช่องว่างท้ายการ์ดสรุป (การ์ดคี่ = ช่องขวาว่าง, การ์ดคู่ = แถบเต็มแถว) */
+  /* มือถือ: แถบบนไม่มีที่พอ (ชื่อพื้นที่งานจะโดนตัด) → โลโก้เป็นช่องแรกซ้ายบนของการ์ดสรุป (user ขอ 24 ก.ย. 2569) */
   .logoTop{display:none}
-  .summary>.logoTile{display:flex;align-items:center;justify-content:center;padding:4px}
+  .summary>.logoTile{display:flex;align-items:center;justify-content:center;padding:4px;order:-1}
   .summary>.logoTile img{max-width:100%;max-height:64px;width:auto;height:auto;object-fit:contain}
-  .summary>.logoTile:nth-child(odd){grid-column:1/-1}
-  .summary>.logoTile:nth-child(odd) img{max-height:40px}
   .top .spacer,.sync{display:none}
   .seg.nav{grid-area:seg;display:flex}
   .seg.nav button{flex:1;padding:6px 4px;font-size:13px;white-space:nowrap}
@@ -1184,7 +1182,7 @@ function render(){
   renderSummary();renderFilters();renderMain();renderDrawer();renderUnsaved();
   $('#banner').classList.toggle('hidden',!isAdmin()||page!=='active'||!Object.values(items).some(it=>it.example));
 }
-// โลโก้ช่องท้ายการ์ดสรุป (แสดงเฉพาะมือถือ ดู CSS .logoTile) · clone รูปเดิม ไม่ต่อ base64 เป็นสตริงทุกรอบ
+// โลโก้ช่องแรกซ้ายบนของการ์ดสรุป (แสดงเฉพาะมือถือ, CSS order:-1 ดู .logoTile · user ขอ 24 ก.ย. 2569) · clone รูปเดิม ไม่ต่อ base64 เป็นสตริงทุกรอบ
 function addLogoTile(){const d=document.createElement('div');d.className='logoTile';d.setAttribute('aria-hidden','true');d.appendChild($('.logoSide img').cloneNode());$('#summary').appendChild(d)}
 function renderSummary(){
   if(page==='archive'){renderArchiveSummary();return}
