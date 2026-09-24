@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="ce316a3b42";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="e32e8ba545";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -836,6 +836,13 @@ function applyOutbox(){
 // ลองบันทึกใบที่ค้าง (สถานะ error) ใหม่ · ไม่ยุ่งกับใบที่กำลังบันทึก/รอพิมพ์
 function retryFailed(){if(!session)return;Object.keys(saveState).forEach(id=>{if(saveState[id].state==='error'&&dirty[id]&&Object.keys(dirty[id]).length&&findItem(id)&&!saving[id]&&!writeTimers[id])saveNow(id,0)})}
 addEventListener('online',()=>{retryFailed()});
+/* ---------- ช่องวันที่: กันปี พ.ศ. (v55) ----------
+   พิมพ์ปี 2543–2643 ในช่องวันที่ = น่าจะเป็น พ.ศ. → แปลงเป็น ค.ศ. ให้ (−543) แล้วแจ้ง · ปีนอก 2000–2100 อื่น ๆ คืนค่าเดิม
+   ทำก่อน handler อื่น (capture) · server ตรวจซ้ำอีกชั้น (vYears) */
+document.addEventListener('change',e=>{const t=e.target;if(!t||t.type!=='date'||!t.value)return;
+  const y=+t.value.slice(0,4);if(y>=2000&&y<=2100)return;
+  if(y>=2543&&y<=2643){t.value=(y-543)+t.value.slice(4);toast('แปลงปี พ.ศ. '+y+' เป็น ค.ศ. '+(y-543)+' ให้แล้ว (ช่องวันที่ใช้ปี ค.ศ.)');return}
+  e.stopImmediatePropagation();t.value=t.defaultValue||'';toast('ปี '+y+' ไม่ถูกต้อง ช่องวันที่ใช้ปี ค.ศ. 2000–2100',true)},true);
 addEventListener('pagehide',()=>{persistOutbox()});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persistOutbox();else retryFailed()});
 function patch(id,fields,opts){
@@ -1504,10 +1511,10 @@ function renderDrawer(){
       </div>
       <div class="sect"><h3>กำหนดเวลา</h3>
         <div class="grid">
-          <div class="f"><label>วันรับใบงาน</label><input type="date" data-f="received" value="${esc(it.received||'')}" ${dis}></div>
-          <div class="f"><label>วันเริ่มงาน</label><input type="date" data-f="start" value="${esc(it.start||'')}" ${dis}></div>
-          <div class="f"><label>กำหนดเสร็จ</label><input type="date" data-f="due" value="${esc(it.due||'')}" ${dis}></div>
-          <div class="f"><label>วันเสร็จจริง</label><input type="date" data-f="finished" value="${esc(it.finished||'')}" ${dis}></div>
+          <div class="f"><label>วันรับใบงาน</label><input type="date" min="2000-01-01" max="2100-12-31" data-f="received" value="${esc(it.received||'')}" ${dis}></div>
+          <div class="f"><label>วันเริ่มงาน</label><input type="date" min="2000-01-01" max="2100-12-31" data-f="start" value="${esc(it.start||'')}" ${dis}></div>
+          <div class="f"><label>กำหนดเสร็จ</label><input type="date" min="2000-01-01" max="2100-12-31" data-f="due" value="${esc(it.due||'')}" ${dis}></div>
+          <div class="f"><label>วันเสร็จจริง</label><input type="date" min="2000-01-01" max="2100-12-31" data-f="finished" value="${esc(it.finished||'')}" ${dis}></div>
           <div class="f wide"><label>ความคืบหน้า (ปรับอัตโนมัติตามสถานะ)</label><div class="prog"><span class="bar ${it.status==='done'?'done':''}" style="flex:1;width:auto"><b style="width:${pctOf(it.status)}%"></b></span><span class="pv">${pctOf(it.status)}%</span></div></div>
         </div>
         ${isOverdue(it)?`<div class="note" style="margin-top:10px;background:var(--s-red-bg);color:var(--s-red-fg)">เกินกำหนดมา ${Math.abs(daysUntil(it.due))} วัน</div>`:isSoon(it)?`<div class="note" style="margin-top:10px;background:var(--s-amber-bg);color:var(--s-amber-fg)">${daysUntil(it.due)===0?'ครบกำหนดวันนี้':'เหลืออีก '+daysUntil(it.due)+' วัน'}</div>`:''}
@@ -1628,9 +1635,9 @@ function showNewModal(){
       <div class="f ${sf?'hidden':''}"><label>ผู้ดำเนินการ</label><select id="nAssignee"><option value="">— เลือก —</option><option value="ภายในแผนก">ภายในแผนก</option><option value="ผู้รับเหมา">ผู้รับเหมา</option></select></div>
       <div class="f hidden" id="nContractorWrap"><label>ชื่อผู้รับเหมา</label><input id="nContractor" data-combo="contractors" maxlength="${MAX.contractor}" placeholder="เลือกหรือพิมพ์ชื่อผู้รับเหมา" autocomplete="off"></div>
       <div class="f"><label>สถานะเริ่มต้น</label><select id="nStatus">${STATUSES.filter(s=>!CLOSED.has(s.id)).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
-      <div class="f"><label>วันรับใบงาน</label><input type="date" id="nRec" value="${t}"></div>
-      <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" id="nStart"></div>
-      <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" id="nDue"></div>
+      <div class="f"><label>วันรับใบงาน</label><input type="date" min="2000-01-01" max="2100-12-31" id="nRec" value="${t}"></div>
+      <div class="f ${sf?'hidden':''}"><label>วันเริ่มงาน</label><input type="date" min="2000-01-01" max="2100-12-31" id="nStart"></div>
+      <div class="f ${sf?'hidden':''}"><label>กำหนดเสร็จ</label><input type="date" min="2000-01-01" max="2100-12-31" id="nDue"></div>
       <div class="f wide ${sf?'hidden':''}"><label>รายละเอียดงาน</label><textarea id="nDetail" maxlength="${MAX.detail}" placeholder="ขอบเขตงานตามใบงานที่ได้รับ"></textarea></div>
       <div class="f"><label>เลขที่ PR / PO อ้างอิง</label><input id="nPoRef" placeholder="เช่น PR-2569-0123" maxlength="60"></div>
       <div class="f"><label>ราคาประเมิน / งบ (บาท)</label><input id="nBudget" placeholder="เช่น 45,000" inputmode="decimal" maxlength="60"></div>
@@ -1829,6 +1836,7 @@ drawer.addEventListener('input',e=>{
   if(t.type==='checkbox')return;
   let v=t.value;
   if(f==='status'||t.tagName==='SELECT')return;
+  if(t.type==='date')return; // วันที่บันทึกตอน change (ผ่านตัวแปลงปี พ.ศ. ก่อน) ไม่บันทึกระหว่างพิมพ์ทีละช่อง
   if(f==='title'){if(/[\r\n]/.test(v)){v=v.replace(/[\r\n]+/g,' ');t.value=v}growTitle()}
   patch(openId,{[f]:v},{debounce:true,silent:true});
 });
