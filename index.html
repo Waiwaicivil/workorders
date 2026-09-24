@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.png">
 <link rel="icon" href="icon.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="d12a40fd60";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="c3ed6e2648";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -160,6 +160,7 @@ td.date{white-space:nowrap;font-size:13px}
 
 /* cards for mobile */
 .cards{display:none;flex-direction:column;gap:8px}
+.more{display:flex;justify-content:center;padding:14px 0}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:6px}
 .card:active{background:var(--surface-2)}
 .card .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
@@ -315,7 +316,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
   .combo{max-height:50vh!important}
   .dhead .line3{gap:6px}
   .dhead .title{font-size:17px}
-  .tablewrap{display:none}
+  /* v53: มือถือไม่สร้างตารางแล้ว กล่อง .tablewrap ที่เหลือคือข้อความ กำลังโหลด/ดึงข้อมูลไม่ได้/ไม่มีใบงาน (เดิมซ่อนทั้งกล่อง ข้อความพวกนี้เลยไม่ขึ้นบนมือถือ) */
   .cards{display:flex}
   .grid{grid-template-columns:1fr}
   .dbody{padding:14px 14px 30px}
@@ -1312,19 +1313,30 @@ function chipStatus(id,it){
   if(it&&it.status==='done'){return it.signed?'<span class="chip green">เซ็นรับแล้ว</span>':'<span class="chip amber">เสร็จแล้ว · รอเซ็นรับ</span>'}
   const s=statusOf(id);return `<span class="chip ${s.tone}">${esc(s.name)}</span>`;
 }
+/* ---------- ประสิทธิภาพเมื่อคลังใหญ่ (v53) ----------
+   พิมพ์ในช่องค้นหา/แผนก/ผู้ดำเนินการ รอหยุดพิมพ์ 200 ms ค่อยวาดใหม่ · มือถือสร้างแค่การ์ด คอมสร้างแค่ตาราง (เดิมสร้างทั้งคู่แล้วซ่อนอันหนึ่ง)
+   แสดงทีละ LIST_STEP ใบ + ปุ่ม "แสดงเพิ่ม" · จำนวนที่แสดงรีเซ็ตเมื่อเปลี่ยนตัวกรอง/หน้า/มุมมอง · CSV ส่งออกครบทุกใบเหมือนเดิม */
+const LIST_STEP=200,MOBILE_MQ=matchMedia('(max-width:760px)');let listLimit=LIST_STEP,listKey='',mainTimer=0;
+function renderMainSoon(){clearTimeout(mainTimer);mainTimer=setTimeout(()=>{mainTimer=0;renderMain()},200)}
+function limitList(arr){const k=JSON.stringify([page,view,ws,filters]);if(k!==listKey){listKey=k;listLimit=LIST_STEP}return arr.length>listLimit?arr.slice(0,listLimit):arr}
+function moreBtn(total,shown){return total>shown?`<div class="more"><button class="btn" id="btnMore">แสดงเพิ่มอีก ${Math.min(LIST_STEP,total-shown)} ใบ (แสดงอยู่ ${shown} จาก ${total})</button></div>`:''}
+if(MOBILE_MQ.addEventListener)MOBILE_MQ.addEventListener('change',()=>renderMain());else if(MOBILE_MQ.addListener)MOBILE_MQ.addListener(()=>renderMain());
+document.addEventListener('click',e=>{if(e.target.closest('#btnMore')){listLimit+=LIST_STEP;renderMain()}});
 function renderMain(){
-  const arr=visibleItems();
-  $('#count').textContent=arr.length+' รายการ';
+  clearTimeout(mainTimer);mainTimer=0;
+  const all=visibleItems();
+  $('#count').textContent=all.length+' รายการ';
   const main=$('#main');
   if(mode==='connecting'||(page==='archive'&&!archiveLoadedAt&&archiveLoading)){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดใบงาน…</div></div>';return}
   if(mode==='error'){
     // ข้อความจาก server (เช่น หัวคอลัมน์ในชีทไม่ตรง) ต้องให้ผู้ใช้เห็น ไม่ใช่โทษอินเทอร์เน็ตอย่างเดียว
     const net=/^(NET|TIMEOUT):|เชื่อมต่อเซิร์ฟเวอร์ไม่ได้|ไม่ตอบสนอง/.test(lastLoadError)||!lastLoadError;
     main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ดึงข้อมูลจากชีทไม่ได้</b>${net?'ตรวจอินเทอร์เน็ต แล้วกดลองใหม่':'เซิร์ฟเวอร์แจ้งว่า:'}${lastLoadError?`<div class="note" style="margin:10px auto;max-width:640px;text-align:left;white-space:pre-wrap">${esc(lastLoadError)}</div>`:'<br><br>'}<button class="btn primary" id="btnRetry">ลองใหม่</button></div></div>`;return}
-  if(page==='archive'){renderArchive(main,arr);return}
-  if(view==='board'){renderBoard(main,arr);return}
+  if(page==='archive'){renderArchive(main,all);return}
+  if(view==='board'){renderBoard(main,all);return}
+  const arr=limitList(all),mob=MOBILE_MQ.matches;
   if(!arr.length){main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ไม่มีใบงานในมุมมองนี้</b>ลองเปลี่ยนตัวกรอง${canEdit()?' หรือกด “ใบงานใหม่” เพื่อเพิ่ม':''}</div></div>`;return}
-  const rows=arr.map(it=>{
+  const rows=mob?'':arr.map(it=>{
     const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);
     return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}${it.example?' <span class="chip outline" style="font-size:10.5px;padding:0 6px">ตัวอย่าง</span>':''}${it.files&&it.files.length?' <span title="มีไฟล์แนบ '+it.files.length+' ไฟล์">📎</span>':''}</td>
@@ -1336,7 +1348,7 @@ function renderMain(){
       <td class="date"><span class="due ${over?'over':soon?'soon':''}"><span class="mono">${fmtD(it.due)}</span>${dl?`<small>${esc(dl)}</small>`:''}</span></td>
       <td><span class="bar ${it.status==='done'?'done':''}"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></td>
     </tr>`}).join('');
-  const cards=arr.map(it=>{
+  const cards=!mob?'':arr.map(it=>{
     const over=isOverdue(it),soon=isSoon(it);const dl=dueLabel(it);const p=priOf(it.priority);
     return `<div class="card" data-id="${esc(it.id)}">
       <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}${it.files&&it.files.length?' 📎':''}</span>${chipStatus(it.status,it)}</div>
@@ -1344,14 +1356,15 @@ function renderMain(){
       <div class="meta"><span>${esc(it.dept||'—')}</span><span class="pri ${p.id}">${esc(p.name)}</span></div>
       <div class="row"><span class="due ${over?'over':soon?'soon':''}"><span style="font-size:12.5px">กำหนดเสร็จ <span class="mono">${fmtD(it.due)}</span></span>${dl?`<small>${esc(dl)}</small>`:''}</span><span><span class="bar ${it.status==='done'?'done':''}" style="width:70px"><b style="width:${pctOf(it.status)}%"></b></span><span class="pct">${pctOf(it.status)}%</span></span></div>
     </div>`}).join('');
-  main.innerHTML=`<div class="tablewrap"><table>
+  main.innerHTML=(mob?`<div class="cards">${cards}</div>`:`<div class="tablewrap"><table>
     <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>สถานะ</th><th>วันที่รับเรื่อง</th><th>วันเริ่ม</th><th>กำหนดเสร็จ</th><th>คืบหน้า</th></tr></thead>
-    <tbody>${rows}</tbody></table></div><div class="cards">${cards}</div>`;
+    <tbody>${rows}</tbody></table></div>`)+moreBtn(all.length,arr.length);
 }
-function renderArchive(main,arr){
+function renderArchive(main,all){
+  const arr=limitList(all),mob=MOBILE_MQ.matches;
   if(!archiveLoadedAt&&!Object.keys(archive).length){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดคลังงาน…</div></div>';return}
-  if(!arr.length){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ยังไม่มีงานที่เซ็นรับในมุมมองนี้</b>เมื่อผู้มีสิทธิ์เซ็นรับงานติ๊ก “เซ็นรับงานแล้ว” ในใบงาน งานจะย้ายมาที่นี่</div></div>';return}
-  const rows=arr.map(it=>{const d=daysBetween(it.received,it.signedAt);return `<tr data-id="${esc(it.id)}">
+  if(!all.length){main.innerHTML='<div class="tablewrap"><div class="empty"><b>ยังไม่มีงานที่เซ็นรับในมุมมองนี้</b>เมื่อผู้มีสิทธิ์เซ็นรับงานติ๊ก “เซ็นรับงานแล้ว” ในใบงาน งานจะย้ายมาที่นี่</div></div>';return}
+  const rows=mob?'':arr.map(it=>{const d=daysBetween(it.received,it.signedAt);return `<tr data-id="${esc(it.id)}">
       <td class="no mono">${esc(it.no||'—')}</td>
       <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||'')}</div></td>
       <td class="dept">${esc(it.dept||'—')}</td>
@@ -1361,15 +1374,15 @@ function renderArchive(main,arr){
       <td class="date mono">${fmtD(it.signedAt)}<div class="sub" style="font-size:12px">${esc(it.signedBy||'')}</div></td>
       <td class="mono" style="text-align:right">${d==null?'—':d}</td>
     </tr>`}).join('');
-  const cards=arr.map(it=>`<div class="card" data-id="${esc(it.id)}">
+  const cards=!mob?'':arr.map(it=>`<div class="card" data-id="${esc(it.id)}">
       <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}</span><span class="chip green">เซ็นรับ ${fmtD(it.signedAt)}</span></div>
       <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
       <div class="meta"><span>${esc(it.dept||'—')}</span><span>${esc(it.type||'')}</span></div>
       <div class="meta"><span>รับเรื่อง ${fmtD(it.received)}</span><span>เสร็จ ${fmtD(it.finished)}</span></div>
     </div>`).join('');
-  main.innerHTML=`<div class="tablewrap"><table>
+  main.innerHTML=(mob?`<div class="cards">${cards}</div>`:`<div class="tablewrap"><table>
     <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>ประเภทงาน</th><th>วันรับเรื่อง</th><th>วันเสร็จจริง</th><th>วันเซ็นรับ</th><th>ใช้เวลา (วัน)</th></tr></thead>
-    <tbody>${rows}</tbody></table></div><div class="cards">${cards}</div>`;
+    <tbody>${rows}</tbody></table></div>`)+moreBtn(all.length,arr.length);
 }
 function tpCls(it){return it.priority==='p1'?'tp1':it.priority==='p2'?'tp2':''}
 function renderBoard(main,arr){
@@ -1743,11 +1756,11 @@ $('#btnClearExamples').addEventListener('click',()=>{
   render();toast('กำลังลบข้อมูลตัวอย่าง…');
   gs('deleteExamples').then(()=>{toast('ลบข้อมูลตัวอย่างแล้ว');refresh(true)}).catch(e=>{toast('ลบไม่สำเร็จ ลองอีกครั้ง');refresh(true)});
 });
-$('#q').addEventListener('input',e=>{filters.q=e.target.value;renderMain()});
-$('#fDept').addEventListener('input',e=>{filters.dept=e.target.value;renderMain()});
+$('#q').addEventListener('input',e=>{filters.q=e.target.value;renderMainSoon()});
+$('#fDept').addEventListener('input',e=>{filters.dept=e.target.value;renderMainSoon()});
 $('#fDept').addEventListener('change',e=>{filters.dept=e.target.value;renderMain()});
 $('#fMonth').addEventListener('change',e=>{filters.month=e.target.value;renderSummary();renderMain()});
-$('#fExec').addEventListener('input',e=>{filters.exec=e.target.value;renderExecStrip();renderMain()});
+$('#fExec').addEventListener('input',e=>{filters.exec=e.target.value;renderExecStrip();renderMainSoon()});
 $('#fExec').addEventListener('change',e=>{filters.exec=e.target.value;renderExecStrip();renderMain()});
 $('#btnExecStats').addEventListener('click',showExecStatsModal);
 $('#fStatus').addEventListener('change',e=>{filters.status=e.target.value;filters.tile='';render()});
