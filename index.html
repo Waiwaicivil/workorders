@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="b5193690c9";</script>
+<script>window.API_URL="https://script.google.com/macros/s/AKfycby20TSC4SCAhBhibsA-goDGbAaQFi8HFrR-eA6LWd3I9-vwkZZRhhbiL-GdOZfPj4J1TQ/exec";window.BUILD="691dc55142";</script>
 
 <title>งานแผนกโยธาและเฉพาะกิจ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -430,8 +430,9 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     </div>
   </div>
   <div class="seg nav" id="pageSeg">
-    <button data-page="active" class="on">งานปัจจุบัน</button>
-    <button data-page="archive">คลังงานที่เซ็นแล้ว</button>
+    <button data-page="active" class="on" data-short="งานปัจจุบัน">งานปัจจุบัน</button>
+    <button data-page="archive" data-short="คลังงาน">คลังงานที่เซ็นแล้ว</button>
+    <button data-page="all" data-short="ทั้งหมด">ใบงานทั้งหมด</button>
   </div>
   <div class="spacer"></div>
   <div class="sync" id="sync"><i></i><span>กำลังเชื่อมต่อ…</span></div>
@@ -471,13 +472,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5}
     <div class="field" style="min-width:210px"><input id="fExec" data-combo="execs" placeholder="ผู้ดำเนินการ: พิมพ์เพื่อค้นหา" autocomplete="off"></div>
     <button class="btn sm" id="btnExecStats" title="สรุปจำนวนงานของแต่ละผู้ดำเนินการ">📊 ผู้ดำเนินการ</button>
     <div class="field" id="fStatusWrap"><select id="fStatus">
-      <option value="open">งานที่ยังเปิดอยู่</option>
-      <option value="pending">เสร็จแล้ว รอเซ็นรับ</option>
-      <option value="all">ทุกสถานะ</option>
-      <option value="overdue">เกินกำหนด</option>
-      <option value="soon">ครบกำหนดใน 7 วัน</option>
-      <optgroup label="สถานะ" id="fStatusGroup"></optgroup>
-    </select></div>
+</select></div>
     <div class="field"><select id="fSort"></select></div>
     <button class="btn sm" id="btnExport" title="ส่งออกรายการที่กรองอยู่เป็นไฟล์ CSV (เปิดด้วย Excel ได้)">⬇ ส่งออก CSV</button>
     <div class="count" id="count"></div>
@@ -531,7 +526,7 @@ let settings=clone(DEFAULT_SETTINGS);
 let session=null;        // {token,user}
 let mode='connecting';   // 'sheet' | 'error'
 let view='table';
-let page='active';       // 'active' | 'archive'
+let page='active';       // 'active' | 'archive' | 'all' (ใบงานทั้งหมด ไม่สนว่าเซ็นรับหรือยัง ไว้ทำสถิติ · v59)
 let ws='civil';
 try{const w=localStorage.getItem('wo-workspace');if(WORKSPACES[w])ws=w}catch(e){}
 let filters=defaultFilters();
@@ -562,7 +557,7 @@ function execPred(){
   if(t.startsWith('ผู้รับเหมา: '))return it=>it.assignee==='ผู้รับเหมา'&&(it.contractor||'')===t.slice(12);
   const q=t.toLowerCase();return it=>execOf(it).toLowerCase().includes(q);
 }
-function pool(){return page==='archive'?archive:items}
+function pool(){return page==='archive'?archive:page==='all'?Object.assign({},items,archive):items}
 // ตัวกรองช่วงเวลา: หน้าคลังนับตามวันเซ็นรับ หน้างานปัจจุบันนับตามวันรับเรื่อง
 function periodKey(){return page==='archive'?'signedAt':'received'}
 function findItem(id){return items[id]||archive[id]||null}
@@ -746,7 +741,7 @@ async function refreshRun(silent,gen,poll){
     mode='sheet';setSync(true,'เชื่อมกับ Google Sheet แล้ว');
     if(!r.unchanged||!wasReady)renderBg();
     if(!r.unchanged)restoreOutbox();else retryFailed();
-    if(page==='archive')loadArchive(false,{poll:true});
+    if(page!=='active')loadArchive(false,{poll:true});
   }catch(e){
     if(gen!==wsGen)return;
     console.warn('refresh failed',e);
@@ -772,8 +767,8 @@ async function loadArchiveRun(gen,poll){
     archiveLoadedAt=Date.now();setTimeout(applyOutbox,0);
     if(r.unchanged)return;
     applyServer(r.items,'archive',r.serverTime||Date.now());dataVer.archive=r.ver||'';fullAt.archive=Date.now();
-    if(page==='archive'){mode='sheet';renderBg()}else{renderFilters()}
-  }catch(e){if(gen!==wsGen)return;console.warn(e);archiveFailAt=Date.now();if(page==='archive'){toast('โหลดคลังงานไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)}}
+    if(page!=='active'){mode='sheet';renderBg()}else{renderFilters()}
+  }catch(e){if(gen!==wsGen)return;console.warn(e);archiveFailAt=Date.now();if(page!=='active'){toast('โหลดคลังงานไม่สำเร็จ: '+cleanMsg(errMsg(e)),true)}}
   finally{if(gen===wsGen){archiveLoading=false;archivePromise=null}}
 }
 function initStore(){
@@ -1140,7 +1135,7 @@ function cmpNo(a,b){const x=noParts(a),y=noParts(b);return x[0].localeCompare(y[
 function cmpDue(a,b){const x=a.due||'',y=b.due||'';if(!x&&y)return -1;if(x&&!y)return 1;return x<y?-1:x>y?1:(b.createdAt||0)-(a.createdAt||0)}
 function visibleItems(){
   const q=filters.q.trim().toLowerCase();
-  let arr=Object.values(pool()).filter(it=>page==='archive'?!!it.signed:!it.signed);
+  let arr=Object.values(pool()).filter(it=>page==='all'||(page==='archive'?!!it.signed:!it.signed));
   if(filters.dept){const dq=filters.dept.trim().toLowerCase();arr=arr.filter(it=>String(it.dept||'').toLowerCase().includes(dq))}
   const ep=execPred();if(ep)arr=arr.filter(ep);
   if(filters.month){const pk=periodKey();arr=arr.filter(it=>String(it[pk]||'').startsWith(filters.month))} // "YYYY" = ทั้งปี, "YYYY-MM" = รายเดือน
@@ -1150,6 +1145,8 @@ function visibleItems(){
   else if(st==='overdue')arr=arr.filter(isOverdue);
   else if(st==='soon')arr=arr.filter(isSoon);
   else if(st==='progress')arr=arr.filter(it=>it.status==='progress');
+  else if(st==='signed')arr=arr.filter(it=>it.signed);
+  else if(st==='unsigned')arr=arr.filter(it=>!it.signed);
   else if(st!=='all')arr=arr.filter(it=>it.status===st);
   if(q){
     // เทียบแบบไม่สนเว้นวรรค ขีด ทับ จุด เพื่อให้ PR-2569-0123 = PR2569/0123 = pr 2569 0123
@@ -1186,6 +1183,7 @@ function render(){
 function addLogoTile(){const d=document.createElement('div');d.className='logoTile';d.setAttribute('aria-hidden','true');d.appendChild($('.logoSide img').cloneNode());$('#summary').appendChild(d)}
 function renderSummary(){
   if(page==='archive'){renderArchiveSummary();return}
+  if(page==='all'){renderAllSummary();return}
   const all=Object.values(items).filter(it=>!it.signed);
   const tiles=[
     {k:'open',label:'งานที่ยังเปิดอยู่',v:all.filter(isOpen).length},
@@ -1221,6 +1219,24 @@ function renderArchiveSummary(){
   $('#summary').innerHTML=tiles.map(t=>t.ds
     ?`<button class="tile" data-deptstat="${t.ds}" title="กดดูสัดส่วนรายแผนก"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span><span class="n">${esc(t.n)}</span><span class="go">ดูแผนภูมิรายแผนก ›</span></button>`
     :`<div class="tile static"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span><span class="n">${esc(t.n)}</span></div>`).join('');
+  addLogoTile();
+}
+// หน้าใบงานทั้งหมด: นับตามวันรับเรื่องในช่วงที่เลือก (ไม่เลือก = ทุกช่วง) · กดช่องสถานะเพื่อกรอง · ช่องแผนกเปิดแผนภูมิรายแผนก (ฐาน "ใบงานทั้งหมด")
+function renderAllSummary(){
+  const p=filters.month,pt=periodText(p);
+  const all=Object.values(items).concat(Object.values(archive)).filter(it=>!p||String(it.received||'').startsWith(p));
+  const byDept={};all.forEach(it=>{const d=it.dept||'ไม่ระบุ';byDept[d]=(byDept[d]||0)+1});
+  const top=Object.entries(byDept).sort((a,b)=>b[1]-a[1])[0];
+  const sfx=p?' · รับเรื่อง '+pt:'';
+  const tiles=[
+    {k:'all',label:'ใบงานทั้งหมด'+sfx,v:all.length},
+    {k:'unsigned',label:'ยังไม่เซ็นรับ',v:all.filter(it=>!it.signed).length},
+    {k:'signed',label:'เซ็นรับแล้ว',v:all.filter(it=>it.signed).length},
+    {k:'cancel',label:'ยกเลิก',v:all.filter(it=>it.status==='cancel').length},
+  ];
+  const cur=filters.tile||filters.status;
+  $('#summary').innerHTML=tiles.map(t=>`<button class="tile ${cur===t.k?'active':''}" data-tile="${t.k}"><span class="k">${esc(t.label)}</span><span class="v">${t.v}</span></button>`).join('')
+    +`<button class="tile" data-deptstat="all" title="กดดูสัดส่วนรายแผนก"><span class="k">แผนกที่ขอมากที่สุด${esc(sfx)}</span><span class="v">${top?top[1]:'—'}</span><span class="n">${esc(top?top[0]+' · รวม '+Object.keys(byDept).length+' แผนก':'ยังไม่มีข้อมูล')}</span><span class="go">ดูแผนภูมิรายแผนก ›</span></button>`;
   addLogoTile();
 }
 /* ---------- สัดส่วนงานรายแผนก (แผนภูมิวงกลม + 10 อันดับ) ---------- */
@@ -1283,11 +1299,12 @@ function showDeptStatsModal(){
   </div></div>`;
 }
 function renderFilters(){
-  const arch=page==='archive';
-  $('#viewSeg').classList.toggle('hidden',arch);
+  const arch=page==='archive',allp=page==='all';
+  $('#viewSeg').classList.toggle('hidden',arch||allp);
   $('#fStatusWrap').classList.toggle('hidden',arch);
-  $$('#pageSeg button').forEach(b=>b.classList.toggle('on',b.dataset.page===page));
-  const sortOpts=arch?[['signed','เซ็นรับล่าสุดก่อน'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['dept','เรียงตามแผนก'],['no','เรียงตามเลขที่']]:[['no','เรียงตามเลขที่ ล่าสุดก่อน'],['due','เรียงตามกำหนดเสร็จ'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['priority','เรียงตามความสำคัญ'],['updated','แก้ไขล่าสุดก่อน']];
+  // มือถือใช้ชื่อสั้น (3 ปุ่มไม่พอที่ 320–360 px) · ชื่อเต็มเก็บใน data-full
+  $$('#pageSeg button').forEach(b=>{b.classList.toggle('on',b.dataset.page===page);if(!b.dataset.full)b.dataset.full=b.textContent;const t=MOBILE_MQ.matches?b.dataset.short:b.dataset.full;if(b.textContent!==t)b.textContent=t;b.title=b.dataset.full});
+  const sortOpts=allp?[['no','เรียงตามเลขที่ ล่าสุดก่อน'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['dept','เรียงตามแผนก'],['updated','แก้ไขล่าสุดก่อน']]:arch?[['signed','เซ็นรับล่าสุดก่อน'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['dept','เรียงตามแผนก'],['no','เรียงตามเลขที่']]:[['no','เรียงตามเลขที่ ล่าสุดก่อน'],['due','เรียงตามกำหนดเสร็จ'],['received','วันรับเรื่อง ล่าสุดก่อน'],['receivedAsc','วันรับเรื่อง เก่าสุดก่อน'],['priority','เรียงตามความสำคัญ'],['updated','แก้ไขล่าสุดก่อน']];
   if(!sortOpts.some(o=>o[0]===filters.sort))filters.sort=sortOpts[0][0];
   const sh=sortOpts.map(o=>`<option value="${o[0]}" ${o[0]===filters.sort?'selected':''}>${o[1]}</option>`).join('');
   if($('#fSort').innerHTML!==sh)$('#fSort').innerHTML=sh;
@@ -1303,8 +1320,10 @@ function renderFilters(){
   const mh=`<option value="">ทุกช่วงเวลาที่${pw}</option>`+years.map(y=>`<optgroup label="ปี ${+y+543}"><option value="${y}">${pw}ทั้งปี ${+y+543}</option>${months.filter(m=>m.startsWith(y)).sort().reverse().map(m=>`<option value="${m}">${pw} ${TH_MONTH[+m.slice(5)-1]} ${+y+543}</option>`).join('')}</optgroup>`).join('');
   if(fm.innerHTML!==mh)fm.innerHTML=mh;
   fm.value=filters.month;
-  const g=$('#fStatusGroup');
-  if(!g.children.length)g.innerHTML=STATUSES.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  // ตัวเลือกสถานะต่างกันระหว่างหน้างานปัจจุบันกับหน้าใบงานทั้งหมด
+  const stOpts=(allp?[['all','ทุกสถานะ'],['unsigned','ยังไม่เซ็นรับ'],['signed','เซ็นรับแล้ว'],['open','ยังไม่ยกเลิก']]:[['open','งานที่ยังเปิดอยู่'],['pending','เสร็จแล้ว รอเซ็นรับ'],['all','ทุกสถานะ'],['overdue','เกินกำหนด'],['soon','ครบกำหนดใน 7 วัน']]).map(o=>`<option value="${o[0]}">${o[1]}</option>`).join('')
+    +`<optgroup label="สถานะ">${STATUSES.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</optgroup>`;
+  if($('#fStatus').innerHTML!==stOpts)$('#fStatus').innerHTML=stOpts;
   if($('#fExec').value!==filters.exec&&document.activeElement!==$('#fExec'))$('#fExec').value=filters.exec;
   renderExecStrip();
   $('#fStatus').value=filters.tile||filters.status;
@@ -1368,19 +1387,20 @@ const LIST_STEP=200,MOBILE_MQ=matchMedia('(max-width:760px)');let listLimit=LIST
 function renderMainSoon(){clearTimeout(mainTimer);mainTimer=setTimeout(()=>{mainTimer=0;renderMain()},200)}
 function limitList(arr){const k=JSON.stringify([page,view,ws,filters]);if(k!==listKey){listKey=k;listLimit=LIST_STEP}return arr.length>listLimit?arr.slice(0,listLimit):arr}
 function moreBtn(total,shown){return total>shown?`<div class="more"><button class="btn" id="btnMore">แสดงเพิ่มอีก ${Math.min(LIST_STEP,total-shown)} ใบ (แสดงอยู่ ${shown} จาก ${total})</button></div>`:''}
-if(MOBILE_MQ.addEventListener)MOBILE_MQ.addEventListener('change',()=>renderMain());else if(MOBILE_MQ.addListener)MOBILE_MQ.addListener(()=>renderMain());
+if(MOBILE_MQ.addEventListener)MOBILE_MQ.addEventListener('change',()=>{renderFilters();renderMain()});else if(MOBILE_MQ.addListener)MOBILE_MQ.addListener(()=>{renderFilters();renderMain()});
 document.addEventListener('click',e=>{if(e.target.closest('#btnMore')){listLimit+=LIST_STEP;renderMain()}});
 function renderMain(){
   clearTimeout(mainTimer);mainTimer=0;
   const all=visibleItems();
   $('#count').textContent=all.length+' รายการ';
   const main=$('#main');
-  if(mode==='connecting'||(page==='archive'&&!archiveLoadedAt&&archiveLoading)){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดใบงาน…</div></div>';return}
+  if(mode==='connecting'||(page!=='active'&&!archiveLoadedAt&&archiveLoading)){main.innerHTML='<div class="tablewrap"><div class="empty">กำลังโหลดใบงาน…</div></div>';return}
   if(mode==='error'){
     // ข้อความจาก server (เช่น หัวคอลัมน์ในชีทไม่ตรง) ต้องให้ผู้ใช้เห็น ไม่ใช่โทษอินเทอร์เน็ตอย่างเดียว
     const net=/^(NET|TIMEOUT):|เชื่อมต่อเซิร์ฟเวอร์ไม่ได้|ไม่ตอบสนอง/.test(lastLoadError)||!lastLoadError;
     main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ดึงข้อมูลจากชีทไม่ได้</b>${net?'ตรวจอินเทอร์เน็ต แล้วกดลองใหม่':'เซิร์ฟเวอร์แจ้งว่า:'}${lastLoadError?`<div class="note" style="margin:10px auto;max-width:640px;text-align:left;white-space:pre-wrap">${esc(lastLoadError)}</div>`:'<br><br>'}<button class="btn primary" id="btnRetry">ลองใหม่</button></div></div>`;return}
   if(page==='archive'){renderArchive(main,all);return}
+  if(page==='all'){renderAll(main,all);return}
   if(view==='board'){renderBoard(main,all);return}
   const arr=limitList(all),mob=MOBILE_MQ.matches;
   if(!arr.length){main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ไม่มีใบงานในมุมมองนี้</b>ลองเปลี่ยนตัวกรอง${canEdit()?' หรือกด “ใบงานใหม่” เพื่อเพิ่ม':''}</div></div>`;return}
@@ -1430,6 +1450,29 @@ function renderArchive(main,all){
     </div>`).join('');
   main.innerHTML=(mob?`<div class="cards">${cards}</div>`:`<div class="tablewrap"><table>
     <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>ประเภทงาน</th><th>วันรับเรื่อง</th><th>วันเสร็จจริง</th><th>วันเซ็นรับ</th><th>ใช้เวลา (วัน)</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`)+moreBtn(all.length,arr.length);
+}
+function renderAll(main,all){
+  const arr=limitList(all),mob=MOBILE_MQ.matches;
+  if(!all.length){main.innerHTML=`<div class="tablewrap"><div class="empty"><b>ไม่มีใบงานในมุมมองนี้</b>ลองเปลี่ยนตัวกรอง${archiveLoadedAt?'':' (กำลังโหลดคลังงาน…)'}</div></div>`;return}
+  const rows=mob?'':arr.map(it=>`<tr data-id="${esc(it.id)}">
+      <td class="no mono">${esc(it.no||'—')}</td>
+      <td class="title">${esc(it.title||'(ไม่มีชื่อ)')}<div class="sub">${esc(it.location||'')}${it.assignee?' · '+esc(execOf(it)):''}</div></td>
+      <td class="dept">${esc(it.dept||'—')}</td>
+      <td class="dept">${esc(it.type||'—')}</td>
+      <td>${chipStatus(it.status,it)}${it.signed&&it.status!=='done'?' <span class="chip green">เซ็นรับแล้ว</span>':''}</td>
+      <td class="date mono">${fmtD(it.received)}</td>
+      <td class="date mono">${fmtD(it.finished)}</td>
+      <td class="date mono">${fmtD(it.signedAt)}</td>
+    </tr>`).join('');
+  const cards=!mob?'':arr.map(it=>`<div class="card" data-id="${esc(it.id)}">
+      <div class="row"><span class="mono" style="font-size:12px">${esc(it.no||'—')}</span>${chipStatus(it.status,it)}</div>
+      <div class="t">${esc(it.title||'(ไม่มีชื่อ)')}</div>
+      <div class="meta"><span>${esc(it.dept||'—')}</span><span>${esc(it.type||'')}</span></div>
+      <div class="meta"><span>รับเรื่อง ${fmtD(it.received)}</span>${it.signed?`<span>เซ็นรับ ${fmtD(it.signedAt)}</span>`:''}</div>
+    </div>`).join('');
+  main.innerHTML=(mob?`<div class="cards">${cards}</div>`:`<div class="tablewrap"><table>
+    <thead><tr><th>เลขที่</th><th>หัวข้องาน</th><th>แผนกที่ขอ</th><th>ประเภทงาน</th><th>สถานะ</th><th>วันรับเรื่อง</th><th>วันเสร็จจริง</th><th>วันเซ็นรับ</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`)+moreBtn(all.length,arr.length);
 }
 function tpCls(it){return it.priority==='p1'?'tp1':it.priority==='p2'?'tp2':''}
@@ -1614,7 +1657,7 @@ function exportCsv(){
   const cell=v=>{v=String(v==null?'':v);if(/^[=+\-@\t\r]/.test(v))v="'"+v;return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
   const lines=[cols.map(c=>cell(c[0])).join(',')].concat(arr.map(it=>cols.map(c=>cell(typeof c[1]==='function'?c[1](it):it[c[1]])).join(',')));
   const blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(WORKSPACES[ws].prefix)+'_'+(page==='archive'?'archive':'active')+'_'+todayISO()+'.csv';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(WORKSPACES[ws].prefix)+'_'+page+'_'+todayISO()+'.csv';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
   toast('ส่งออก '+arr.length+' รายการแล้ว');
 }
 
@@ -1790,7 +1833,7 @@ $('#wsSel').addEventListener('change',e=>{
   items={};archive={};archiveLoadedAt=0;openId=null;page='active';filters=defaultFilters();mode='connecting';
   applyWs();render();refresh(false);
 });
-$('#pageSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.page===page)return;page=b.dataset.page;filters.tile='';filters.status='open';filters.month='';filters.sort=page==='archive'?'signed':'no';render();if(page==='archive')loadArchive(false)});
+$('#pageSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.dataset.page===page)return;page=b.dataset.page;filters.tile='';filters.status=page==='all'?'all':'open';filters.month='';filters.sort=page==='archive'?'signed':'no';render();if(page!=='active')loadArchive(false)});
 $('#btnNew').addEventListener('click',()=>{if(canEdit())showNewModal()});
 $('#btnUser').addEventListener('click',()=>showUserModal(false));
 $('#btnSettings').addEventListener('click',()=>{if(isAdmin())showSettingsModal()});
@@ -1814,7 +1857,7 @@ $('#btnExecStats').addEventListener('click',showExecStatsModal);
 $('#fStatus').addEventListener('change',e=>{filters.status=e.target.value;filters.tile='';render()});
 $('#fSort').addEventListener('change',e=>{filters.sort=e.target.value;renderMain()});
 $('#viewSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;view=b.dataset.view;$$('#viewSeg button').forEach(x=>x.classList.toggle('on',x===b));renderMain()});
-$('#summary').addEventListener('click',e=>{const dsb=e.target.closest('[data-deptstat]');if(dsb){openDeptStats(dsb.dataset.deptstat);return}const t=e.target.closest('.tile');if(!t||!t.dataset.tile)return;filters.tile=filters.tile===t.dataset.tile?'':t.dataset.tile;if(!filters.tile)filters.status='open';render()});
+$('#summary').addEventListener('click',e=>{const dsb=e.target.closest('[data-deptstat]');if(dsb){openDeptStats(dsb.dataset.deptstat);return}const t=e.target.closest('.tile');if(!t||!t.dataset.tile)return;if(page==='all'){const k=t.dataset.tile;filters.tile='';filters.status=filters.status===k&&k!=='all'?'all':k;render();return}filters.tile=filters.tile===t.dataset.tile?'':t.dataset.tile;if(!filters.tile)filters.status='open';render()});
 $('#main').addEventListener('click',e=>{
   if(e.target.id==='btnRetry'){mode='connecting';render();refresh(false);return}
   if(e.target.closest('.kstatus'))return;
